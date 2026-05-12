@@ -53,9 +53,14 @@ def test_diagnosis_report_generation_with_mock_logits(diagnosis_data: Data, mock
     gate_residual = build_gate_residual_stats(
         {
             "gate": torch.tensor([[0.1], [0.2]]),
-            "residual_raw": torch.tensor([[1.0], [-1.0]]),
+            "delta_raw": torch.tensor([[1.0], [-1.0]]),
+            "delta": torch.tensor([[0.8], [-0.8]]),
+            "residual_shift": torch.tensor([0.1, -0.1]),
             "rho": torch.tensor(0.3),
-        }
+            "delta_scale": torch.tensor(2.0),
+            "gate_mode": torch.tensor(1),
+        },
+        gate_mode="safe_residual",
     )
 
     report = {

@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from data.load_fraud import load_fraud_dataset
 from evidence.vocab import encode_reasoning, get_evidence_slots, get_reason_types
 from models.gnn import build_detector
-from models.reasoner import EvidenceReasoner
+from models.reasoner import EvidenceReasoner, VALID_GATE_MODES
 from training.metrics import compute_metrics, compute_metrics_with_threshold
 from utils.paths import get_checkpoint_dir, get_results_dir, get_err_cache_dir, get_base_checkpoint_path, get_reasoner_checkpoint_path, ensure_dir
 from utils.threshold import find_best_threshold, evaluate_with_threshold
@@ -64,6 +64,7 @@ def main():
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--run_name", type=str, default="base")
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--stratified", action="store_true", help="Use stratified split")
     parser.add_argument(
         "--threshold_mode",
         type=str,
@@ -71,6 +72,8 @@ def main():
         choices=["fixed", "val_f1", "val_macro_f1"],
         help="Threshold mode: fixed (0.5), val_f1 (best F1 on val), val_macro_f1 (best Macro-F1 on val)",
     )
+    parser.add_argument("--gate_mode", type=str, default=None, choices=VALID_GATE_MODES)
+    parser.add_argument("--delta_scale", type=float, default=None)
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -92,10 +95,12 @@ def main():
         split_mode = config["dataset"].get("split_mode", "supervised")
         train_ratio = config["dataset"].get("train_ratio", 0.7)
         val_test_ratio = config["dataset"].get("val_test_ratio", [1, 2])
+        stratified = config["dataset"].get("stratified", False)
 
         data = load_fraud_dataset(
             dataset_name, path=dataset_path, seed=seed,
-            split_mode=split_mode, train_ratio=train_ratio, val_test_ratio=val_test_ratio
+            split_mode=split_mode, train_ratio=train_ratio, val_test_ratio=val_test_ratio,
+            stratified=stratified,
         )
 
     base_model = build_detector(
@@ -185,10 +190,18 @@ def main():
             print(f"Error: Reasoner checkpoint not found at {reasoner_path}")
             sys.exit(1)
 
+        rc = config.get("reasoner", {})
+        gate_mode = args.gate_mode or rc.get("gate_mode", "safe_residual")
+        delta_scale = args.delta_scale or rc.get("delta_scale", 2.0)
+
         reasoner = EvidenceReasoner(
             z_dim=z.shape[1],
-            hidden_dim=config.get("reasoner", {}).get("hidden_dim", 128),
-            rho=config.get("reasoner", {}).get("rho", 0.3),
+            hidden_dim=rc.get("hidden_dim", 128),
+            rho=rc.get("rho", 0.3),
+            gate_mode=gate_mode,
+            delta_scale=delta_scale,
+            gate_bias_init=rc.get("gate_bias_init", -2.0),
+            residual_init_zero=rc.get("residual_init_zero", True),
         ).to(device)
 
         state = torch.load(reasoner_path, weights_only=True)

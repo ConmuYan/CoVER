@@ -83,6 +83,7 @@ def main():
     parser.add_argument("--skip_eval", action="store_true")
     parser.add_argument("--confirm_large_qwen_run", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
+    parser.add_argument("--stratified", action="store_true", help="Use stratified split")
     args = parser.parse_args()
 
     if "qwen" in args.teachers and args.qwen_trace_size > 64 and not args.confirm_large_qwen_run:
@@ -140,6 +141,8 @@ def main():
                         "--run_name", "base",
                         "--seed", str(seed),
                     ]
+                    if args.stratified:
+                        cmd.append("--stratified")
                     ok, elapsed = run_command(cmd, train_env, f"Stage 1: {dataset} seed={seed}", args.dry_run)
                     seed_results["timings"]["stage1"] = elapsed
                     if not ok:
@@ -147,7 +150,7 @@ def main():
                         continue
 
             if "rule" in args.teachers and not args.skip_rule:
-                run_name = "rule"
+                run_name = "rule_stratified" if args.stratified else "rule"
                 if not args.skip_stage3 or not check_err_complete(dataset, args.model, run_name, seed):
                     cmd = [
                         python, str(project_root / "scripts" / "generate_stage2_err.py"),
@@ -157,6 +160,8 @@ def main():
                         "--run_name", run_name,
                         "--seed", str(seed),
                     ]
+                    if args.stratified:
+                        cmd.append("--stratified")
                     ok, elapsed = run_command(cmd, train_env, f"Stage 2 Rule: {dataset} seed={seed}", args.dry_run)
                     seed_results["timings"]["stage2_rule"] = elapsed
                     if not ok:
@@ -187,6 +192,8 @@ def main():
                         "--run_name", run_name,
                         "--seed", str(seed),
                     ]
+                    if args.stratified:
+                        cmd.append("--stratified")
                     ok, elapsed = run_command(cmd, train_env, f"Eval Stage 3 Rule: {dataset} seed={seed}", args.dry_run)
                     seed_results["timings"]["eval_stage3_rule"] = elapsed
 
@@ -207,7 +214,7 @@ def main():
                     run_command(cmd, None, f"Compare Stage1 vs Stage3 Rule: {dataset} seed={seed}", args.dry_run)
 
             if "qwen" in args.teachers and not args.skip_qwen:
-                run_name = "qwen"
+                run_name = "qwen_stratified" if args.stratified else "qwen"
                 if not args.skip_stage3 or not check_err_complete(dataset, args.model, run_name, seed):
                     cmd = [
                         python, str(project_root / "scripts" / "generate_stage2_err.py"),
@@ -218,6 +225,8 @@ def main():
                         "--seed", str(seed),
                         "--enable_retry",
                     ]
+                    if args.stratified:
+                        cmd.append("--stratified")
                     ok, elapsed = run_command(cmd, llm_env, f"Stage 2 Qwen: {dataset} seed={seed}", args.dry_run)
                     seed_results["timings"]["stage2_qwen"] = elapsed
                     if not ok:
@@ -234,6 +243,8 @@ def main():
                             "--run_name", run_name,
                             "--seed", str(seed),
                         ]
+                        if args.stratified:
+                            cmd.append("--stratified")
                         ok, elapsed = run_command(cmd, train_env, f"Stage 3 Qwen: {dataset} seed={seed}", args.dry_run)
                         seed_results["timings"]["stage3_qwen"] = elapsed
                         if not ok:
@@ -248,6 +259,8 @@ def main():
                         "--run_name", run_name,
                         "--seed", str(seed),
                     ]
+                    if args.stratified:
+                        cmd.append("--stratified")
                     ok, elapsed = run_command(cmd, train_env, f"Eval Stage 3 Qwen: {dataset} seed={seed}", args.dry_run)
                     seed_results["timings"]["eval_stage3_qwen"] = elapsed
 

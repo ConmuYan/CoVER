@@ -92,3 +92,57 @@ def test_use_evidence_loss_false():
 
     assert loss_dict["pos"] == 0.0
     assert loss_dict["neg"] == 0.0
+
+
+def test_residual_l2_weight_adds_term():
+    outputs = _make_outputs()
+    y = torch.zeros(10)
+    targets = _make_targets()
+    accepted_mask = torch.zeros(10)
+    base_logit = torch.randn(10)
+
+    loss_no_reg, dict_no_reg = compute_reasoner_loss(
+        outputs, y, targets, accepted_mask, base_logit=base_logit, residual_l2_weight=0.0,
+    )
+    loss_with_reg, dict_with_reg = compute_reasoner_loss(
+        outputs, y, targets, accepted_mask, base_logit=base_logit, residual_l2_weight=0.01,
+    )
+
+    assert dict_no_reg["residual_l2"] == 0.0
+    assert dict_with_reg["residual_l2"] > 0.0
+    assert loss_with_reg > loss_no_reg
+
+
+def test_shift_penalty_weight_adds_term():
+    outputs = _make_outputs()
+    y = torch.zeros(10)
+    targets = _make_targets()
+    accepted_mask = torch.zeros(10)
+    base_logit = torch.zeros(10)
+
+    outputs["final_logit"] = torch.tensor([3.0, -3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+    loss_no_pen, dict_no_pen = compute_reasoner_loss(
+        outputs, y, targets, accepted_mask, base_logit=base_logit,
+        max_shift_penalty_weight=0.0, max_abs_shift=2.0,
+    )
+    loss_with_pen, dict_with_pen = compute_reasoner_loss(
+        outputs, y, targets, accepted_mask, base_logit=base_logit,
+        max_shift_penalty_weight=0.01, max_abs_shift=2.0,
+    )
+
+    assert dict_no_pen["shift_penalty"] == 0.0
+    assert dict_with_pen["shift_penalty"] > 0.0
+    assert loss_with_pen > loss_no_pen
+
+
+def test_default_weights_dont_change_old_behavior():
+    outputs = _make_outputs()
+    y = torch.zeros(10)
+    targets = _make_targets()
+    accepted_mask = torch.ones(10)
+
+    loss, loss_dict = compute_reasoner_loss(outputs, y, targets, accepted_mask)
+
+    assert loss_dict["residual_l2"] == 0.0
+    assert loss_dict["shift_penalty"] == 0.0

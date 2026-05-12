@@ -74,6 +74,7 @@ def main():
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--run_name", type=str, default="base")
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--stratified", action="store_true", help="Use stratified split")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -104,7 +105,8 @@ def main():
 
         data = load_fraud_dataset(
             dataset_name, path=dataset_path, seed=seed, scarcity_ratio=scarcity_ratio,
-            split_mode=split_mode, train_ratio=train_ratio, val_test_ratio=val_test_ratio
+            split_mode=split_mode, train_ratio=train_ratio, val_test_ratio=val_test_ratio,
+            stratified=args.stratified
         )
         epochs = config["train"]["epochs"]
 

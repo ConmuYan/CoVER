@@ -65,8 +65,10 @@ def test_return_debug_outputs():
     outputs = reasoner(z, base_logit, evi_ids, return_debug=True)
 
     assert outputs["gate"].shape == (num_nodes, 1)
-    assert outputs["residual_raw"].shape == (num_nodes, 1)
-    assert outputs["residual"].shape == (num_nodes, 1)
+    assert outputs["delta_raw"].shape == (num_nodes, 1)
+    assert outputs["delta"].shape == (num_nodes, 1)
     assert outputs["rho"].shape == ()
-    assert torch.allclose(outputs["residual"], outputs["gate"] * outputs["residual_raw"])
+    assert outputs["gate_mode"].shape == ()
+    assert outputs["delta_scale"].shape == ()
+    assert outputs["residual_shift"].shape == (num_nodes,)
     assert torch.isclose(outputs["rho"], torch.tensor(0.3, device=outputs["rho"].device))

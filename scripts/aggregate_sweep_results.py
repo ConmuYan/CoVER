@@ -46,13 +46,13 @@ def fmt_ms(mean: float, std: float) -> str:
 
 
 def parse_rho_lambda(run_name: str, base_name: str) -> tuple[float, float] | None:
-    # pattern: {base_name}_rho{value}_lambda{value}
-    pattern = re.escape(base_name) + r"_rho([0-9.eE+-]+)_lambda([0-9.eE+-]+)$"
+    # pattern: {base_name}_rho{value}_lambda{value} or {base_name}_{gate_mode}_rho{value}_lambda{value}
+    pattern = re.escape(base_name) + r"(?:_(\w+))?_rho([0-9.eE+-]+)_lambda([0-9.eE+-]+)$"
     m = re.match(pattern, run_name)
     if not m:
         return None
     try:
-        return float(m.group(1)), float(m.group(2))
+        return float(m.group(2)), float(m.group(3))
     except ValueError:
         return None
 
@@ -121,10 +121,12 @@ def extract_metrics(seed_data: dict) -> dict:
     calibrated = seed_data["calibrated"]
     base_metrics = seed_data.get("base_metrics") or {}
 
-    # Handle nested format from run_reasoner_sweep.py (test_metrics key)
     test_metrics = stage3.get("test_metrics", stage3)
 
     result: dict = {
+        "gate_mode": stage3.get("gate_mode", "safe_residual"),
+        "delta_scale": stage3.get("delta_scale", 2.0),
+        "residual_l2_weight": stage3.get("residual_l2_weight", 0.0),
         "roc_auc": test_metrics.get("roc_auc", 0.0),
         "auprc": test_metrics.get("auprc", 0.0),
         "f1_fixed": test_metrics.get("f1", 0.0),
@@ -189,6 +191,12 @@ def extract_metrics(seed_data: dict) -> dict:
     result["base_f1"] = base_metrics.get("f1", 0.0)
     result["base_macro_f1"] = base_metrics.get("macro_f1", 0.0)
 
+    diagnosis = seed_data.get("diagnosis", {})
+    rs = diagnosis.get("residual_shift", {})
+    result["residual_shift_mean"] = rs.get("mean", 0.0)
+    result["residual_shift_std"] = rs.get("std", 0.0)
+    result["max_abs_residual_shift"] = rs.get("max_abs", 0.0)
+
     return result
 
 
@@ -198,6 +206,7 @@ METRIC_KEYS = [
     "positive_prediction_rate_fixed", "positive_prediction_rate_val_f1",
     "positive_prediction_rate_val_macro",
     "base_roc_auc", "base_auprc", "base_f1", "base_macro_f1",
+    "residual_shift_mean", "residual_shift_std", "max_abs_residual_shift",
 ]
 
 
@@ -248,6 +257,9 @@ def build_table_row(
     run_name: str,
     rho: float,
     lambda_evi: float,
+    gate_mode: str,
+    delta_scale: float,
+    residual_l2_weight: float,
     num_seeds: int,
     agg: dict,
 ) -> dict:
@@ -255,8 +267,11 @@ def build_table_row(
 
     return {
         "run_name": run_name,
+        "gate_mode": gate_mode,
         "rho": rho,
         "lambda_evi": lambda_evi,
+        "delta_scale": delta_scale,
+        "residual_l2_weight": residual_l2_weight,
         "num_seeds": num_seeds,
         "roc_auc": fmt_ms(agg["roc_auc_mean"], agg["roc_auc_std"]),
         "auprc": fmt_ms(agg["auprc_mean"], agg["auprc_std"]),
@@ -267,10 +282,13 @@ def build_table_row(
         ),
         "macro_f1_val_macro_threshold": fmt_ms(
             agg["macro_f1_val_macro_threshold_mean"],
-            agg["macro_f1_val_macro_threshold_std"],
+            agg["macro_f1_val_macro_threshold_std"]
         ),
         "positive_prediction_rate_fixed": f"{agg['positive_prediction_rate_fixed_mean']:.4f}",
         "positive_prediction_rate_calibrated": f"{agg['positive_prediction_rate_val_macro_mean']:.4f}",
+        "residual_shift_mean": f"{agg['residual_shift_mean_mean']:.4f}",
+        "residual_shift_std": f"{agg['residual_shift_std_mean']:.4f}",
+        "max_abs_residual_shift": f"{agg['max_abs_residual_shift_mean']:.4f}",
         "delta_vs_base": delta_vs_base,
         "recommended": recommended,
     }
@@ -285,7 +303,7 @@ def build_csv_row(md_row: dict, agg: dict) -> dict:
 
 
 CSV_COLUMNS = [
-    "run_name", "rho", "lambda_evi", "num_seeds",
+    "run_name", "gate_mode", "rho", "lambda_evi", "delta_scale", "residual_l2_weight", "num_seeds",
     "roc_auc_mean", "roc_auc_std",
     "auprc_mean", "auprc_std",
     "f1_fixed_mean", "f1_fixed_std",
@@ -294,6 +312,7 @@ CSV_COLUMNS = [
     "macro_f1_val_macro_threshold_mean", "macro_f1_val_macro_threshold_std",
     "positive_prediction_rate_fixed_mean",
     "positive_prediction_rate_val_macro_mean",
+    "residual_shift_mean_mean", "residual_shift_std_mean", "max_abs_residual_shift_mean",
     "delta_vs_base", "recommended",
 ]
 
@@ -311,22 +330,25 @@ def save_markdown(rows: list[dict], path: Path, dataset: str) -> None:
     lines = [
         f"# Reasoner Sweep Results — {dataset}",
         "",
-        "| run_name | rho | lambda_evi | seeds | ROC-AUC | AUPRC | "
+        "| run_name | gate_mode | rho | lambda_evi | delta_scale | r_l2 | seeds | ROC-AUC | AUPRC | "
         "F1 (fixed) | Macro-F1 (fixed) | F1 (val_f1) | Macro-F1 (val_macro) | "
-        "PPR (fixed) | PPR (calibrated) | delta_vs_base | recommended |",
-        "|----------|-----|------------|-------|---------|-------|"
+        "PPR (fixed) | PPR (calibrated) | shift_mean | shift_std | max_shift | delta_vs_base | recommended |",
+        "|----------|-----------|-----|------------|-------------|------|-------|---------|-------|"
         "-----------|-----------------|-------------|---------------------|"
-        "------------|------------------|---------------|-------------|",
+        "------------|------------------|------------|-----------|-----------|---------------|-------------|",
     ]
 
     for r in rows:
         lines.append(
-            f"| {r['run_name']} | {r['rho']} | {r['lambda_evi']} | "
+            f"| {r['run_name']} | {r['gate_mode']} | {r['rho']} | {r['lambda_evi']} | "
+            f"{r['delta_scale']} | {r['residual_l2_weight']} | "
             f"{r['num_seeds']} | {r['roc_auc']} | {r['auprc']} | "
             f"{r['f1_fixed']} | {r['macro_f1_fixed']} | "
             f"{r['f1_val_f1_threshold']} | {r['macro_f1_val_macro_threshold']} | "
             f"{r['positive_prediction_rate_fixed']} | "
             f"{r['positive_prediction_rate_calibrated']} | "
+            f"{r['residual_shift_mean']} | {r['residual_shift_std']} | "
+            f"{r['max_abs_residual_shift']} | "
             f"{r['delta_vs_base']} | {r['recommended']} |"
         )
 
@@ -417,7 +439,10 @@ def main() -> None:
             continue
 
         agg = aggregate_across_seeds(seed_metrics)
-        md_row = build_table_row(args.run_name, rho, lambda_evi, len(seed_metrics), agg)
+        gate_mode = seed_metrics[0].get("gate_mode", "safe_residual")
+        delta_scale = seed_metrics[0].get("delta_scale", 2.0)
+        residual_l2_weight = seed_metrics[0].get("residual_l2_weight", 0.0)
+        md_row = build_table_row(args.run_name, rho, lambda_evi, gate_mode, delta_scale, residual_l2_weight, len(seed_metrics), agg)
         csv_row = build_csv_row(md_row, agg)
         md_rows.append(md_row)
         csv_rows.append(csv_row)

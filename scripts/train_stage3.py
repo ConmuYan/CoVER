@@ -18,7 +18,7 @@ from data.load_fraud import load_fraud_dataset
 from evidence.schema import ERR, ReasoningChannel
 from evidence.vocab import encode_err_targets, encode_reasoning, get_evidence_slots, get_reason_types
 from models.gnn import build_detector
-from models.reasoner import EvidenceReasoner
+from models.reasoner import EvidenceReasoner, VALID_GATE_MODES
 from training.losses import compute_reasoner_loss
 from training.metrics import compute_metrics
 from utils.tensorboard import create_logger
@@ -122,15 +122,23 @@ def train_one_epoch(reasoner, z, base_logits, targets, train_mask, optimizer, co
         "neg_mask": neg_mask[train_mask],
     }
 
-    lambda_evi = config.get("reasoner", {}).get("lambda_evi", 0.5)
-    use_type_loss = config.get("reasoner", {}).get("use_type_loss", True)
-    use_evidence_loss = config.get("reasoner", {}).get("use_evidence_loss", True)
+    rc = config.get("reasoner", {})
+    lambda_evi = rc.get("lambda_evi", 0.5)
+    use_type_loss = rc.get("use_type_loss", True)
+    use_evidence_loss = rc.get("use_evidence_loss", True)
+    residual_l2_weight = rc.get("residual_l2_weight", 0.0)
+    max_shift_penalty_weight = rc.get("max_shift_penalty_weight", 0.0)
+    max_abs_shift = rc.get("max_abs_shift", 2.0)
 
     loss, loss_dict = compute_reasoner_loss(
         outputs, y_train, targets_train, accepted_train,
+        base_logit=base_logit_train,
         lambda_evi=lambda_evi,
         use_type_loss=use_type_loss,
         use_evidence_loss=use_evidence_loss,
+        residual_l2_weight=residual_l2_weight,
+        max_shift_penalty_weight=max_shift_penalty_weight,
+        max_abs_shift=max_abs_shift,
     )
 
     optimizer.zero_grad()
@@ -165,10 +173,34 @@ def main():
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--run_name", type=str, default="rule")
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--stratified", action="store_true", help="Use stratified split")
+    parser.add_argument("--gate_mode", type=str, default=None, choices=VALID_GATE_MODES)
+    parser.add_argument("--rho", type=float, default=None)
+    parser.add_argument("--delta_scale", type=float, default=None)
+    parser.add_argument("--lambda_evi", type=float, default=None)
+    parser.add_argument("--residual_l2_weight", type=float, default=None)
+    parser.add_argument("--max_shift_penalty_weight", type=float, default=None)
+    parser.add_argument("--max_abs_shift", type=float, default=None)
     args = parser.parse_args()
 
     with open(args.config) as f:
         config = yaml.safe_load(f)
+
+    rc = config.setdefault("reasoner", {})
+    if args.gate_mode is not None:
+        rc["gate_mode"] = args.gate_mode
+    if args.rho is not None:
+        rc["rho"] = args.rho
+    if args.delta_scale is not None:
+        rc["delta_scale"] = args.delta_scale
+    if args.lambda_evi is not None:
+        rc["lambda_evi"] = args.lambda_evi
+    if args.residual_l2_weight is not None:
+        rc["residual_l2_weight"] = args.residual_l2_weight
+    if args.max_shift_penalty_weight is not None:
+        rc["max_shift_penalty_weight"] = args.max_shift_penalty_weight
+    if args.max_abs_shift is not None:
+        rc["max_abs_shift"] = args.max_abs_shift
 
     dataset_name = config["dataset"]["name"]
     dataset_path = config["dataset"].get("path")
@@ -187,10 +219,12 @@ def main():
         split_mode = config["dataset"].get("split_mode", "supervised")
         train_ratio = config["dataset"].get("train_ratio", 0.7)
         val_test_ratio = config["dataset"].get("val_test_ratio", [1, 2])
+        stratified = config["dataset"].get("stratified", False)
 
         data = load_fraud_dataset(
             dataset_name, path=dataset_path, seed=seed,
-            split_mode=split_mode, train_ratio=train_ratio, val_test_ratio=val_test_ratio
+            split_mode=split_mode, train_ratio=train_ratio, val_test_ratio=val_test_ratio,
+            stratified=stratified,
         )
         epochs = config["train"].get("epochs", 200)
 
@@ -241,11 +275,20 @@ def main():
     )
 
     hidden_dim = z.shape[1]
-    rho = config.get("reasoner", {}).get("rho", 0.3)
+    rho = rc.get("rho", 0.3)
+    gate_mode = rc.get("gate_mode", "safe_residual")
+    delta_scale = rc.get("delta_scale", 2.0)
+    gate_bias_init = rc.get("gate_bias_init", -2.0)
+    residual_init_zero = rc.get("residual_init_zero", True)
+
     reasoner = EvidenceReasoner(
         z_dim=hidden_dim,
-        hidden_dim=config.get("reasoner", {}).get("hidden_dim", 128),
+        hidden_dim=rc.get("hidden_dim", 128),
         rho=rho,
+        gate_mode=gate_mode,
+        delta_scale=delta_scale,
+        gate_bias_init=gate_bias_init,
+        residual_init_zero=residual_init_zero,
     ).to(device)
 
     optimizer = torch.optim.Adam(
@@ -323,6 +366,12 @@ def main():
         "epochs_trained": epoch,
         "elapsed_seconds": elapsed,
         "rho": rho,
+        "gate_mode": gate_mode,
+        "delta_scale": delta_scale,
+        "lambda_evi": rc.get("lambda_evi", 0.5),
+        "residual_l2_weight": rc.get("residual_l2_weight", 0.0),
+        "max_shift_penalty_weight": rc.get("max_shift_penalty_weight", 0.0),
+        "max_abs_shift": rc.get("max_abs_shift", 2.0),
         "num_accepted_err": len(accepted_errs),
     }
 

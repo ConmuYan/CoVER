@@ -18,7 +18,7 @@ try:
 except ImportError:
     Data = Any
 
-from data.split import generate_masks, stratified_split, apply_scarcity, save_split
+from data.split import generate_masks, stratified_split, apply_scarcity, save_split, load_split
 
 
 def load_tiny_graph(

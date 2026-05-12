@@ -32,6 +32,7 @@ def main():
     parser.add_argument("--confirm_large_llm_run", action="store_true")
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--stratified", action="store_true", help="Use stratified split")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -64,7 +65,8 @@ def main():
 
         data = load_fraud_dataset(
             dataset_name, path=dataset_path, seed=seed,
-            split_mode=split_mode, train_ratio=train_ratio, val_test_ratio=val_test_ratio
+            split_mode=split_mode, train_ratio=train_ratio, val_test_ratio=val_test_ratio,
+            stratified=args.stratified
         )
         if args.trace_size is not None:
             trace_size = args.trace_size

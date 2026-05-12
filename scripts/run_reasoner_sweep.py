@@ -45,7 +45,7 @@ from data.load_fraud import load_fraud_dataset
 from evidence.vocab import encode_err_targets, encode_reasoning, get_evidence_slots, get_reason_types
 from evidence.schema import ERR
 from models.gnn import build_detector
-from models.reasoner import EvidenceReasoner
+from models.reasoner import EvidenceReasoner, VALID_GATE_MODES
 from training.metrics import compute_metrics
 from utils.paths import (
     ARTIFACTS_ROOT,
@@ -75,8 +75,10 @@ def _save_json(path: Path, data: dict) -> None:
         json.dump(data, f, indent=2)
 
 
-def _sweep_run_name(base: str, rho: float, lambda_evi: float) -> str:
-    return f"{base}_rho{rho}_lambda{lambda_evi}"
+def _sweep_run_name(base: str, rho: float, lambda_evi: float, gate_mode: str = "safe_residual") -> str:
+    if gate_mode == "safe_residual":
+        return f"{base}_rho{rho}_lambda{lambda_evi}"
+    return f"{base}_{gate_mode}_rho{rho}_lambda{lambda_evi}"
 
 
 def _sweep_dir(dataset: str, model: str, sweep_name: str, seed: int) -> Path:
@@ -143,6 +145,7 @@ def _evaluate_with_calibration(
     if debug:
         data = load_fraud_dataset("tiny", seed=seed)
     else:
+        stratified = config["dataset"].get("stratified", False)
         data = load_fraud_dataset(
             dataset_name,
             path=config["dataset"].get("path"),
@@ -150,6 +153,7 @@ def _evaluate_with_calibration(
             split_mode=config["dataset"].get("split_mode", "supervised"),
             train_ratio=config["dataset"].get("train_ratio", 0.7),
             val_test_ratio=config["dataset"].get("val_test_ratio", [1, 2]),
+            stratified=stratified,
         )
 
     base_model = build_detector(
@@ -172,11 +176,19 @@ def _evaluate_with_calibration(
         base_logits = out.logits
         z = out.embeddings
 
-    rho = config.get("reasoner", {}).get("rho", 0.3)
+    rc = config.get("reasoner", {})
+    rho = rc.get("rho", 0.3)
+    gate_mode = rc.get("gate_mode", "safe_residual")
+    delta_scale = rc.get("delta_scale", 2.0)
+
     reasoner = EvidenceReasoner(
         z_dim=z.shape[1],
-        hidden_dim=config.get("reasoner", {}).get("hidden_dim", 128),
+        hidden_dim=rc.get("hidden_dim", 128),
         rho=rho,
+        gate_mode=gate_mode,
+        delta_scale=delta_scale,
+        gate_bias_init=rc.get("gate_bias_init", -2.0),
+        residual_init_zero=rc.get("residual_init_zero", True),
     ).to(device)
 
     ckpt_dir = get_checkpoint_dir(dataset_name, model_name, run_name, seed)
@@ -293,11 +305,19 @@ def _diagnose_reasoner(
         base_logits = out.logits
         z = out.embeddings
 
-    rho = config.get("reasoner", {}).get("rho", 0.3)
+    rc = config.get("reasoner", {})
+    rho = rc.get("rho", 0.3)
+    gate_mode = rc.get("gate_mode", "safe_residual")
+    delta_scale = rc.get("delta_scale", 2.0)
+
     reasoner = EvidenceReasoner(
         z_dim=z.shape[1],
-        hidden_dim=config.get("reasoner", {}).get("hidden_dim", 128),
+        hidden_dim=rc.get("hidden_dim", 128),
         rho=rho,
+        gate_mode=gate_mode,
+        delta_scale=delta_scale,
+        gate_bias_init=rc.get("gate_bias_init", -2.0),
+        residual_init_zero=rc.get("residual_init_zero", True),
     ).to(device)
 
     ckpt_dir = get_checkpoint_dir(dataset_name, model_name, run_name, seed)
@@ -334,11 +354,9 @@ def _diagnose_reasoner(
             return_debug=True,
         )
 
-    gate = outputs["gate"].cpu().numpy().flatten()
-    residual_raw = outputs["residual_raw"].cpu().numpy().flatten()
-    residual = outputs["residual"].cpu().numpy().flatten()
     final_logit = outputs["final_logit"].cpu().numpy().flatten()
     base_logit_np = base_logits[test_mask].cpu().numpy().flatten()
+    residual_shift = outputs["residual_shift"].cpu().numpy().flatten()
 
     reason_types = get_reason_types()
     type_logits = outputs["type_logits"].cpu().numpy()
@@ -359,48 +377,59 @@ def _diagnose_reasoner(
         rho_check["max_diff_from_base"] = max_diff
         rho_check["passes"] = max_diff < 1e-6
 
-    return {
+    result = {
         "dataset": dataset_name,
         "model": model_name,
         "run_name": run_name,
         "source_err_cache": base_run_name,
         "seed": seed,
         "rho": rho,
+        "gate_mode": gate_mode,
+        "delta_scale": delta_scale,
         "num_test_nodes": int(test_mask.sum().item()),
-        "gate": {
+        "residual_shift": {
+            "mean": float(np.mean(residual_shift)),
+            "std": float(np.std(residual_shift)),
+            "min": float(np.min(residual_shift)),
+            "max": float(np.max(residual_shift)),
+            "max_abs": float(np.max(np.abs(residual_shift))),
+        },
+    }
+    result["final_logit"] = {
+            "mean": float(np.mean(final_logit)),
+            "std": float(np.std(final_logit)),
+            "min": float(np.min(final_logit)),
+            "max": float(np.max(final_logit)),
+        }
+    result["base_logit"] = {
+            "mean": float(np.mean(base_logit_np)),
+            "std": float(np.std(base_logit_np)),
+        }
+    result["predicted_type_distribution"] = type_dist
+    result["rho_zero_check"] = rho_check
+    result["delta_vs_base"] = _deltas(stage3_metrics, base_metrics)
+
+    if "gate" in outputs:
+        gate = outputs["gate"].cpu().numpy().flatten()
+        result["gate"] = {
             "mean": float(np.mean(gate)),
             "std": float(np.std(gate)),
             "min": float(np.min(gate)),
             "max": float(np.max(gate)),
             "median": float(np.median(gate)),
             "frac_positive": float(np.mean(gate > 0)),
-        },
-        "residual_raw": {
-            "mean": float(np.mean(residual_raw)),
-            "std": float(np.std(residual_raw)),
-            "min": float(np.min(residual_raw)),
-            "max": float(np.max(residual_raw)),
-        },
-        "residual_scaled": {
-            "mean": float(np.mean(residual)),
-            "std": float(np.std(residual)),
-            "min": float(np.min(residual)),
-            "max": float(np.max(residual)),
-        },
-        "final_logit": {
-            "mean": float(np.mean(final_logit)),
-            "std": float(np.std(final_logit)),
-            "min": float(np.min(final_logit)),
-            "max": float(np.max(final_logit)),
-        },
-        "base_logit": {
-            "mean": float(np.mean(base_logit_np)),
-            "std": float(np.std(base_logit_np)),
-        },
-        "predicted_type_distribution": type_dist,
-        "rho_zero_check": rho_check,
-        "delta_vs_base": _deltas(stage3_metrics, base_metrics),
-    }
+        }
+
+    if "delta" in outputs:
+        delta = outputs["delta"].cpu().numpy().flatten()
+        result["delta"] = {
+            "mean": float(np.mean(delta)),
+            "std": float(np.std(delta)),
+            "min": float(np.min(delta)),
+            "max": float(np.max(delta)),
+        }
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -415,6 +444,10 @@ def run_job(
     seed: int,
     rho: float,
     lambda_evi: float,
+    gate_mode: str = "safe_residual",
+    delta_scale: float = 2.0,
+    residual_l2_weight: float = 0.001,
+    max_shift_penalty_weight: float = 0.001,
     train_gpus: list[str],
     dry_run: bool,
     skip_existing: bool,
@@ -424,7 +457,7 @@ def run_job(
 
     Returns (sweep_run_name, success).
     """
-    sweep_name = _sweep_run_name(base_run_name, rho, lambda_evi)
+    sweep_name = _sweep_run_name(base_run_name, rho, lambda_evi, gate_mode)
     out_dir = _sweep_dir(dataset, model, sweep_name, seed)
 
     if skip_existing:
@@ -467,6 +500,10 @@ def run_job(
     patched["run"]["seed"] = seed
     patched.setdefault("reasoner", {})["rho"] = rho
     patched["reasoner"]["lambda_evi"] = lambda_evi
+    patched["reasoner"]["gate_mode"] = gate_mode
+    patched["reasoner"]["delta_scale"] = delta_scale
+    patched["reasoner"]["residual_l2_weight"] = residual_l2_weight
+    patched["reasoner"]["max_shift_penalty_weight"] = max_shift_penalty_weight
 
     gpu = train_gpus[(seed + int(rho * 1000) + int(lambda_evi * 1000)) % len(train_gpus)]
     env = os.environ.copy()
@@ -535,6 +572,7 @@ def run_job(
         diagnosis = {
             "error": str(e),
             "rho": rho,
+            "gate_mode": gate_mode,
             "run_name": sweep_name,
             "seed": seed,
         }
@@ -548,6 +586,9 @@ def run_job(
         "seed": seed,
         "rho": rho,
         "lambda_evi": lambda_evi,
+        "gate_mode": gate_mode,
+        "delta_scale": delta_scale,
+        "residual_l2_weight": residual_l2_weight,
         "test_metrics": stage3_metrics.get("test_metrics", stage3_metrics),
         "epochs_trained": stage3_metrics.get("epochs_trained", -1),
         "num_accepted_err": stage3_metrics.get("num_accepted_err", 0),
@@ -579,10 +620,18 @@ def main() -> None:
                         help="Base run whose ERR cache to reuse (e.g. qwen)")
     parser.add_argument("--seeds", nargs="+", type=int, default=[0],
                         help="Random seeds")
+    parser.add_argument("--gate_modes", nargs="+", type=str,
+                        default=["safe_residual"],
+                        choices=VALID_GATE_MODES,
+                        help="Gate modes to sweep")
     parser.add_argument("--rho_values", nargs="+", type=float,
                         default=[0.0, 0.05, 0.1, 0.2, 0.3])
     parser.add_argument("--lambda_values", nargs="+", type=float,
                         default=[0.0, 0.1, 0.3, 0.5])
+    parser.add_argument("--delta_scale_values", nargs="+", type=float,
+                        default=[1.0, 2.0])
+    parser.add_argument("--residual_l2_values", nargs="+", type=float,
+                        default=[0.0, 0.001])
     parser.add_argument("--train_gpus", type=str, default="0",
                         help="Comma-separated CUDA_VISIBLE_DEVICES")
     parser.add_argument("--dry_run", action="store_true",
@@ -599,29 +648,37 @@ def main() -> None:
     if not train_gpus:
         train_gpus = [""]
 
-    # Build job list
     jobs = [
         {
             "rho": rho,
             "lambda_evi": lam,
             "seed": seed,
+            "gate_mode": gm,
+            "delta_scale": ds,
+            "residual_l2_weight": rl2,
         }
+        for gm in args.gate_modes
         for rho in args.rho_values
         for lam in args.lambda_values
+        for ds in args.delta_scale_values
+        for rl2 in args.residual_l2_values
         for seed in args.seeds
     ]
 
     print(f"CoVER-FD Reasoner Sweep")
     print(f"{'='*60}")
-    print(f"  Dataset:   {args.dataset}")
-    print(f"  Model:     {args.model}")
-    print(f"  ERR cache: {args.run_name}")
-    print(f"  Seeds:     {args.seeds}")
-    print(f"  Rho:       {args.rho_values}")
-    print(f"  Lambda:    {args.lambda_values}")
-    print(f"  GPUs:      {train_gpus}")
-    print(f"  Max jobs:  {args.max_jobs}")
-    print(f"  Total:     {len(jobs)} combinations")
+    print(f"  Dataset:     {args.dataset}")
+    print(f"  Model:       {args.model}")
+    print(f"  ERR cache:   {args.run_name}")
+    print(f"  Seeds:       {args.seeds}")
+    print(f"  Gate modes:  {args.gate_modes}")
+    print(f"  Rho:         {args.rho_values}")
+    print(f"  Lambda:      {args.lambda_values}")
+    print(f"  Delta scale: {args.delta_scale_values}")
+    print(f"  Residual L2: {args.residual_l2_values}")
+    print(f"  GPUs:        {train_gpus}")
+    print(f"  Max jobs:    {args.max_jobs}")
+    print(f"  Total:       {len(jobs)} combinations")
     print(f"{'='*60}")
 
     if not jobs:
@@ -640,6 +697,9 @@ def main() -> None:
                 seed=job["seed"],
                 rho=job["rho"],
                 lambda_evi=job["lambda_evi"],
+                gate_mode=job["gate_mode"],
+                delta_scale=job["delta_scale"],
+                residual_l2_weight=job["residual_l2_weight"],
                 train_gpus=train_gpus,
                 dry_run=args.dry_run,
                 skip_existing=args.skip_existing,
@@ -658,6 +718,9 @@ def main() -> None:
                     seed=job["seed"],
                     rho=job["rho"],
                     lambda_evi=job["lambda_evi"],
+                    gate_mode=job["gate_mode"],
+                    delta_scale=job["delta_scale"],
+                    residual_l2_weight=job["residual_l2_weight"],
                     train_gpus=train_gpus,
                     dry_run=False,
                     skip_existing=args.skip_existing,

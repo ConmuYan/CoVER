@@ -33,7 +33,7 @@ from evidence.vocab import (
     get_reason_types,
 )
 from models.gnn import build_detector
-from models.reasoner import EvidenceReasoner
+from models.reasoner import EvidenceReasoner, VALID_GATE_MODES
 from training.losses import compute_reasoner_loss
 from utils.paths import (
     ensure_dir,
@@ -264,17 +264,23 @@ def build_threshold_behavior(
     return results
 
 
-def build_gate_residual_stats(outputs: dict[str, torch.Tensor]) -> dict:
+def build_gate_residual_stats(outputs: dict[str, torch.Tensor], gate_mode: str) -> dict:
     """Section E: residual / gate statistics."""
     result: dict = {}
 
-    gate = outputs["gate"]
-    residual_raw = outputs["residual_raw"]
-    rho = outputs["rho"]
+    result["gate_mode"] = gate_mode
+    result["residual_shift"] = _tensor_stat_dict(outputs["residual_shift"])
+    result["max_abs_residual_shift"] = float(outputs["residual_shift"].abs().max().item())
 
-    result["gate"] = _tensor_stat_dict(gate)
-    result["residual_raw"] = _tensor_stat_dict(residual_raw)
-    result["rho"] = float(rho.item())
+    if "gate" in outputs:
+        result["gate"] = _tensor_stat_dict(outputs["gate"])
+    if "delta" in outputs:
+        result["delta"] = _tensor_stat_dict(outputs["delta"])
+    if "delta_raw" in outputs:
+        result["delta_raw"] = _tensor_stat_dict(outputs["delta_raw"])
+
+    result["rho"] = float(outputs["rho"].item())
+    result["delta_scale"] = float(outputs["delta_scale"].item())
 
     return result
 
@@ -461,19 +467,32 @@ def render_markdown(report: dict) -> str:
 
     gr = report.get("gate_residual", {})
     lines.append("## E. Residual / Gate Statistics")
-    gate = gr.get("gate", {})
-    lines.append(f"- Gate: mean={gate.get('mean', 0):.6f} std={gate.get('std', 0):.6f} min={gate.get('min', 0):.6f} max={gate.get('max', 0):.6f}")
-    rr = gr.get("residual_raw", {})
-    lines.append(f"- Residual raw: mean={rr.get('mean', 0):.6f} std={rr.get('std', 0):.6f} min={rr.get('min', 0):.6f} max={rr.get('max', 0):.6f}")
+    lines.append(f"- Gate mode: {gr.get('gate_mode', 'N/A')}")
     lines.append(f"- rho: {gr.get('rho', 0):.4f}")
+    lines.append(f"- delta_scale: {gr.get('delta_scale', 0):.4f}")
+
+    rs = gr.get("residual_shift", {})
+    lines.append(f"- Residual shift: mean={rs.get('mean', 0):.6f} std={rs.get('std', 0):.6f} min={rs.get('min', 0):.6f} max={rs.get('max', 0):.6f}")
+    lines.append(f"- Max abs residual shift: {gr.get('max_abs_residual_shift', 0):.6f}")
+
+    gate = gr.get("gate", {})
+    if gate:
+        lines.append(f"- Gate: mean={gate.get('mean', 0):.6f} std={gate.get('std', 0):.6f} min={gate.get('min', 0):.6f} max={gate.get('max', 0):.6f}")
+
+    delta = gr.get("delta", {})
+    if delta:
+        lines.append(f"- Delta: mean={delta.get('mean', 0):.6f} std={delta.get('std', 0):.6f} min={delta.get('min', 0):.6f} max={delta.get('max', 0):.6f}")
 
     for split in ("val", "test"):
         sg = gr.get(f"{split}_gate", {})
-        sr = gr.get(f"{split}_residual_raw", {})
+        sr = gr.get(f"{split}_delta_raw", {})
+        srs = gr.get(f"{split}_residual_shift", {})
         if sg:
             lines.append(f"  - {split} gate: mean={sg.get('mean', 0):.6f} std={sg.get('std', 0):.6f}")
         if sr:
-            lines.append(f"  - {split} residual_raw: mean={sr.get('mean', 0):.6f} std={sr.get('std', 0):.6f}")
+            lines.append(f"  - {split} delta_raw: mean={sr.get('mean', 0):.6f} std={sr.get('std', 0):.6f}")
+        if srs:
+            lines.append(f"  - {split} residual_shift: mean={srs.get('mean', 0):.6f} std={srs.get('std', 0):.6f}")
     lines.append("")
 
     ev = report.get("evidence_supervision", {})
@@ -522,6 +541,7 @@ def main():
     parser.add_argument("--run_name", type=str, required=True)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--gate_mode", type=str, default=None, choices=VALID_GATE_MODES)
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -544,6 +564,7 @@ def main():
     split_mode = config["dataset"].get("split_mode", "supervised")
     train_ratio = config["dataset"].get("train_ratio", 0.7)
     val_test_ratio = config["dataset"].get("val_test_ratio", [1, 2])
+    stratified = config["dataset"].get("stratified", False)
 
     data = load_fraud_dataset(
         dataset_name,
@@ -552,6 +573,7 @@ def main():
         split_mode=split_mode,
         train_ratio=train_ratio,
         val_test_ratio=val_test_ratio,
+        stratified=stratified,
     )
 
     y = data.y
@@ -647,11 +669,19 @@ def main():
         print(f"ERROR: reasoner checkpoint not found at {reasoner_path}")
         sys.exit(1)
 
-    rho = config.get("reasoner", {}).get("rho", 0.3)
+    rc = config.get("reasoner", {})
+    rho = rc.get("rho", 0.3)
+    gate_mode = args.gate_mode or rc.get("gate_mode", "safe_residual")
+    delta_scale = rc.get("delta_scale", 2.0)
+
     reasoner = EvidenceReasoner(
         z_dim=z.shape[1],
-        hidden_dim=config.get("reasoner", {}).get("hidden_dim", 128),
+        hidden_dim=rc.get("hidden_dim", 128),
         rho=rho,
+        gate_mode=gate_mode,
+        delta_scale=delta_scale,
+        gate_bias_init=rc.get("gate_bias_init", -2.0),
+        residual_init_zero=rc.get("residual_init_zero", True),
     ).to(device)
 
     r_state = torch.load(reasoner_path, weights_only=True)
@@ -667,8 +697,6 @@ def main():
         )
 
     final_logit_all = outputs_all["final_logit"]
-    gate_all = outputs_all["gate"]
-    residual_raw_all = outputs_all["residual_raw"]
 
     base_logit_np = base_logits.cpu().numpy()
     final_logit_np = final_logit_all.cpu().numpy()
@@ -701,13 +729,18 @@ def main():
         y_np[test_np],
     )
 
-    gate_residual = build_gate_residual_stats(outputs_all)
+    gate_residual = build_gate_residual_stats(outputs_all, gate_mode)
     for split_name, split_mask_np in [("val", val_np), ("test", test_np)]:
-        gate_residual[f"{split_name}_gate"] = _stat_dict(
-            gate_all.cpu().numpy()[split_mask_np].flatten()
-        )
-        gate_residual[f"{split_name}_residual_raw"] = _stat_dict(
-            residual_raw_all.cpu().numpy()[split_mask_np].flatten()
+        if "gate" in outputs_all:
+            gate_residual[f"{split_name}_gate"] = _stat_dict(
+                outputs_all["gate"].cpu().numpy()[split_mask_np].flatten()
+            )
+        if "delta_raw" in outputs_all:
+            gate_residual[f"{split_name}_delta_raw"] = _stat_dict(
+                outputs_all["delta_raw"].cpu().numpy()[split_mask_np].flatten()
+            )
+        gate_residual[f"{split_name}_residual_shift"] = _stat_dict(
+            outputs_all["residual_shift"].cpu().numpy()[split_mask_np].flatten()
         )
 
     evidence_stats = build_evidence_supervision_stats(
