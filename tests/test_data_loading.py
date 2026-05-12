@@ -1,12 +1,16 @@
 import pytest
 import torch
 import sys
+import json
+from types import SimpleNamespace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data.load_fraud import load_tiny_graph, load_synthetic_graph, load_fraud_dataset
-from data.split import generate_masks, apply_scarcity, stratified_split
+from data.split import generate_masks, apply_scarcity, stratified_split, load_split as load_split_masks
+import data.load_fraud as load_fraud_module
+import utils.paths as paths
 
 
 def test_tiny_graph_creation():
@@ -101,3 +105,110 @@ def test_generate_masks_custom_ratios():
     assert abs(train_ratio - 0.6) < 0.05
     assert abs(val_ratio - 0.2) < 0.05
     assert abs(test_ratio - 0.2) < 0.05
+
+
+def test_stratified_split_paths_and_metadata(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "ARTIFACTS_ROOT", tmp_path / "artifacts")
+    monkeypatch.chdir(tmp_path)
+
+    y = torch.tensor([1, 0, 0, 0, 1, 0, 0, 1, 0], dtype=torch.long)
+    train_mask = torch.tensor([True, True, True, True, False, False, False, False, False])
+    val_mask = torch.tensor([False, False, False, False, True, True, False, False, False])
+    test_mask = torch.tensor([False, False, False, False, False, False, True, True, True])
+    data = SimpleNamespace(y=y, train_mask=train_mask, val_mask=val_mask, test_mask=test_mask)
+
+    split_path_false = load_fraud_module.save_split(data, "demo", 7, "supervised", 0.7, [1, 2], stratified=False)
+    split_path_true = load_fraud_module.save_split(data, "demo", 7, "supervised", 0.7, [1, 2], stratified=True)
+
+    assert split_path_false != split_path_true
+    assert split_path_false.as_posix().endswith("artifacts/splits/demo/stratified_false/seed_7/split.pt")
+    assert split_path_true.as_posix().endswith("artifacts/splits/demo/stratified_true/seed_7/split.pt")
+
+    meta_false = json.loads((split_path_false.parent / "split_meta.json").read_text())
+    meta_true = json.loads((split_path_true.parent / "split_meta.json").read_text())
+
+    assert meta_false["stratified"] is False
+    assert meta_true["stratified"] is True
+    assert meta_true["global_pos_rate"] == pytest.approx(3 / 9)
+    assert meta_true["train_pos_rate"] == pytest.approx(1 / 4)
+    assert meta_true["val_pos_rate"] == pytest.approx(1 / 2)
+    assert meta_true["test_pos_rate"] == pytest.approx(1 / 3)
+    assert meta_true["max_pos_rate_gap"] == pytest.approx((1 / 2) - (1 / 4))
+    assert meta_true["relative_pos_rate_gap"] == pytest.approx(((1 / 2) - (1 / 4)) / (3 / 9))
+    assert meta_true["class_counts_by_split"] == {
+        "train": {"pos": 1, "neg": 3},
+        "val": {"pos": 1, "neg": 1},
+        "test": {"pos": 1, "neg": 2},
+    }
+    assert isinstance(meta_true["class_counts_by_split"]["train"]["pos"], int)
+
+    loaded = SimpleNamespace(y=y.clone())
+    loaded = load_split_masks(loaded, "demo", 7, stratified=True)
+    assert torch.equal(loaded.train_mask, train_mask)
+    assert torch.equal(loaded.val_mask, val_mask)
+    assert torch.equal(loaded.test_mask, test_mask)
+
+
+def test_load_split_falls_back_to_legacy_layout(tmp_path, monkeypatch):
+    monkeypatch.setattr(paths, "ARTIFACTS_ROOT", tmp_path / "artifacts")
+    monkeypatch.chdir(tmp_path)
+
+    legacy_dir = tmp_path / "artifacts" / "splits" / "legacy_demo" / "seed_5"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+
+    masks = {
+        "train_mask": torch.tensor([True, False, False]),
+        "val_mask": torch.tensor([False, True, False]),
+        "test_mask": torch.tensor([False, False, True]),
+    }
+    torch.save(masks, legacy_dir / "split.pt")
+
+    data = SimpleNamespace(y=torch.tensor([0, 1, 0], dtype=torch.long))
+    loaded = load_fraud_module.load_split(data, "legacy_demo", 5, stratified=False)
+
+    assert torch.equal(loaded.train_mask, masks["train_mask"])
+    assert torch.equal(loaded.val_mask, masks["val_mask"])
+    assert torch.equal(loaded.test_mask, masks["test_mask"])
+
+
+def test_load_fraud_dataset_stratified_switch(monkeypatch):
+    data = SimpleNamespace(
+        x=torch.randn(4, 2),
+        edge_index=torch.tensor([[0, 1], [1, 0]], dtype=torch.long),
+        y=torch.tensor([0, 1, 0, 1], dtype=torch.long),
+    )
+
+    calls = {"generate": 0, "stratified": 0, "save": []}
+
+    def fake_load_from_mat(path):
+        return data
+
+    def fake_generate_masks(input_data, seed=0, ratios=(0.7, 0.15, 0.15)):
+        calls["generate"] += 1
+        input_data.train_mask = torch.tensor([True, True, False, False])
+        input_data.val_mask = torch.tensor([False, False, True, False])
+        input_data.test_mask = torch.tensor([False, False, False, True])
+        return input_data
+
+    def fake_stratified_split(input_data, seed=0, ratios=(0.7, 0.15, 0.15)):
+        calls["stratified"] += 1
+        input_data.train_mask = torch.tensor([True, False, True, False])
+        input_data.val_mask = torch.tensor([False, True, False, False])
+        input_data.test_mask = torch.tensor([False, False, False, True])
+        return input_data
+
+    def fake_save_split(input_data, dataset, seed, split_mode, train_ratio, val_test_ratio, stratified=False):
+        calls["save"].append({"dataset": dataset, "seed": seed, "stratified": stratified})
+
+    monkeypatch.setattr(load_fraud_module, "load_from_mat", fake_load_from_mat)
+    monkeypatch.setattr(load_fraud_module, "generate_masks", fake_generate_masks)
+    monkeypatch.setattr(load_fraud_module, "stratified_split", fake_stratified_split)
+    monkeypatch.setattr(load_fraud_module, "save_split", fake_save_split)
+
+    load_fraud_module.load_fraud_dataset("yelpchi", path="dummy.mat", seed=3, stratified=True)
+    load_fraud_module.load_fraud_dataset("yelpchi", path="dummy.mat", seed=3, stratified=False)
+
+    assert calls["stratified"] == 1
+    assert calls["generate"] == 1
+    assert calls["save"][0]["stratified"] is True
+    assert calls["save"][1]["stratified"] is False

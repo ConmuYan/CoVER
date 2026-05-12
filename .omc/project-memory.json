@@ -1,0 +1,10 @@
+{
+  "techStack": "Python, PyTorch, PyG (PyTorch Geometric), YAML, JSON",
+  "build": "pytest -q for tests, python scripts/ for experiments",
+  "conventions": "Simple PyTorch/PyG code, no unnecessary abstraction, type hints, deterministic seeds",
+  "structure": "cover-fd/: configs/, data/, models/, evidence/, training/, scripts/, tests/, artifacts/",
+  "notes": "Task 8.1 complete. Qwen teacher adds no value over Rule teacher. Both reasoners hurt F1. Issue in reasoner architecture, not teacher quality.",
+  "version": "1.0.0",
+  "lastScanned": 1778609737647,
+  "projectRoot": "/data1/mq/codes/awesome-graph-anomaly-detection/cover-fd"
+}

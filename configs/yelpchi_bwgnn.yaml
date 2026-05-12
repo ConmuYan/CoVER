@@ -1,32 +1,67 @@
 project: cover_fd
 dataset:
   name: yelpchi
-  path: /path/to/yelpchi.pt
-  format: pt
+  path: /data1/mq/codes/awesome-graph-anomaly-detection/cover-fd/datasets/YelpChi.mat
+  format: mat
+  split_mode: supervised
+  train_ratio: 0.4
+  val_test_ratio: [1, 2]
+  split_seed: 42
   scarcity_ratio: 1.0
-  split_seed: 0
 
 model:
   name: bwgnn
   hidden_dim: 64
   num_layers: 2
-  dropout: 0.5
-  num_coeffs: 3
+  dropout: 0.3
+  num_bands: 3
+  agg: concat
 
 train:
   seed: 0
-  epochs: 300
+  epochs: 100
   debug_epochs: 3
-  lr: 0.005
+  lr: 0.01
+  optimizer: adam
   weight_decay: 0.0005
   patience: 50
-  device: cuda
+  device: cuda:0
+  select_metric: macro_f1
+
+gpu:
+  train_visible_devices: "2"
+  llm_visible_devices: "3"
+  qwen_parallel_visible_devices: "2,3"
+  default_train_device: cuda:0
+  default_llm_device: cuda:0
+
+run:
+  teacher: rule
+  run_name: rule
+  seed: 0
 
 evidence:
-  trace_size: 2000
+  trace_size: 1000
+  trace_size_small: 32
   teacher: rule
   use_verifier: true
   use_counter: true
+
+llm:
+  backend: transformers_local
+  model_name_or_path: /data1/mq/models/Qwen3-4B-Instruct-2507
+  temperature: 0.0
+  max_retries: 3
+  max_new_tokens: 256
+  device_map: auto
+  torch_dtype: auto
+  trust_remote_code: true
+  max_trace_nodes_debug: 8
+  max_trace_nodes_small: 32
+  enable_verifier_retry: true
+  max_verifier_retries: 1
+  max_parse_retries: 1
+  visible_devices: "3"
 
 reasoner:
   hidden_dim: 128

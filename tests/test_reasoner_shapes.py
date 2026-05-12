@@ -25,28 +25,25 @@ def make_dummy_graph(num_nodes=50, num_features=16, num_edges=100):
 def test_gcn_shapes():
     graph = make_dummy_graph()
     model = GCNDetector(in_channels=16, hidden_channels=32, num_layers=2)
-    logit, emb = model(graph.x, graph.edge_index)
+    logit = model(graph.x, graph.edge_index)
 
     assert logit.shape == (50,)
-    assert emb.shape == (50, 32)
 
 
 def test_sage_shapes():
     graph = make_dummy_graph()
     model = SAGEDetector(in_channels=16, hidden_channels=32, num_layers=2)
-    logit, emb = model(graph.x, graph.edge_index)
+    logit = model(graph.x, graph.edge_index)
 
     assert logit.shape == (50,)
-    assert emb.shape == (50, 32)
 
 
 def test_gat_shapes():
     graph = make_dummy_graph()
     model = GATDetector(in_channels=16, hidden_channels=32, num_layers=2, attention_heads=4)
-    logit, emb = model(graph.x, graph.edge_index)
+    logit = model(graph.x, graph.edge_index)
 
     assert logit.shape == (50,)
-    assert emb.shape == (50, 32)
 
 
 def test_build_detector():
@@ -69,7 +66,7 @@ def test_mask_selection():
     graph = make_dummy_graph()
     model = GCNDetector(in_channels=16, hidden_channels=32)
 
-    logit_all, emb_all = model(graph.x, graph.edge_index)
+    logit_all = model(graph.x, graph.edge_index)
     assert logit_all.shape == (50,)
 
     train_logit = logit_all[graph.train_mask]

@@ -17,16 +17,6 @@ def compute_metrics(
     y_pred_prob: np.ndarray,
     k_values: list[int] | None = None,
 ) -> dict[str, float]:
-    """Compute fraud detection metrics.
-
-    Args:
-        y_true: Ground truth labels (0/1).
-        y_pred_prob: Predicted probabilities for positive class.
-        k_values: K values for Precision@K and Recall@K.
-
-    Returns:
-        Dict with metric names and values.
-    """
     if k_values is None:
         k_values = [50, 100, 200]
 
@@ -41,8 +31,48 @@ def compute_metrics(
 
     y_pred_binary = (y_pred_prob >= 0.5).astype(int)
     metrics["f1"] = f1_score(y_true, y_pred_binary, zero_division=0)
+    metrics["macro_f1"] = f1_score(y_true, y_pred_binary, average="macro", zero_division=0)
     metrics["precision"] = precision_score(y_true, y_pred_binary, zero_division=0)
     metrics["recall"] = recall_score(y_true, y_pred_binary, zero_division=0)
+
+    for k in k_values:
+        pk, rk = precision_recall_at_k(y_true, y_pred_prob, k)
+        metrics[f"precision@{k}"] = pk
+        metrics[f"recall@{k}"] = rk
+
+    return metrics
+
+
+def compute_metrics_with_threshold(
+    y_true: np.ndarray,
+    y_pred_prob: np.ndarray,
+    threshold: float,
+    k_values: list[int] | None = None,
+) -> dict[str, float]:
+    """Same as compute_metrics but uses *threshold* instead of 0.5.
+
+    Returns dict with all standard metrics plus threshold_used and
+    positive_prediction_rate.
+    """
+    if k_values is None:
+        k_values = [50, 100, 200]
+
+    metrics: dict[str, float] = {}
+
+    try:
+        metrics["roc_auc"] = roc_auc_score(y_true, y_pred_prob)
+    except ValueError:
+        metrics["roc_auc"] = 0.0
+
+    metrics["auprc"] = average_precision_score(y_true, y_pred_prob)
+
+    y_pred_binary = (y_pred_prob >= threshold).astype(int)
+    metrics["f1"] = f1_score(y_true, y_pred_binary, zero_division=0)
+    metrics["macro_f1"] = f1_score(y_true, y_pred_binary, average="macro", zero_division=0)
+    metrics["precision"] = precision_score(y_true, y_pred_binary, zero_division=0)
+    metrics["recall"] = recall_score(y_true, y_pred_binary, zero_division=0)
+    metrics["threshold_used"] = float(threshold)
+    metrics["positive_prediction_rate"] = float(y_pred_binary.mean()) if y_pred_binary.size > 0 else 0.0
 
     for k in k_values:
         pk, rk = precision_recall_at_k(y_true, y_pred_prob, k)

@@ -5,13 +5,14 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 
 try:
-    from torch_geometric.data import Data
     from torch_geometric.nn import GATConv, GCNConv, SAGEConv
 except ImportError:
-    Data = None
     GCNConv = None
     GATConv = None
     SAGEConv = None
+
+from models.base import BaseModelOutput
+from models.bwgnn import BWGNNDetector
 
 
 class GCNDetector(nn.Module):
@@ -35,14 +36,19 @@ class GCNDetector(nn.Module):
             self.convs.append(GCNConv(hidden_channels, hidden_channels))
         self.head = nn.Linear(hidden_channels, 1)
 
-    def forward(self, x: Tensor, edge_index: Tensor) -> tuple[Tensor, Tensor]:
+    def forward(
+        self, x: Tensor, edge_index: Tensor, return_output: bool = False,
+    ) -> Tensor | BaseModelOutput:
         for conv in self.convs:
             x = conv(x, edge_index)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
         embedding = x
-        logit = self.head(embedding).squeeze(-1)
-        return logit, embedding
+        logits = self.head(embedding).squeeze(-1)
+
+        if return_output:
+            return BaseModelOutput(logits=logits, embeddings=embedding, extras={})
+        return logits
 
 
 class SAGEDetector(nn.Module):
@@ -67,14 +73,19 @@ class SAGEDetector(nn.Module):
             self.convs.append(SAGEConv(hidden_channels, hidden_channels, aggr=aggr))
         self.head = nn.Linear(hidden_channels, 1)
 
-    def forward(self, x: Tensor, edge_index: Tensor) -> tuple[Tensor, Tensor]:
+    def forward(
+        self, x: Tensor, edge_index: Tensor, return_output: bool = False,
+    ) -> Tensor | BaseModelOutput:
         for conv in self.convs:
             x = conv(x, edge_index)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
         embedding = x
-        logit = self.head(embedding).squeeze(-1)
-        return logit, embedding
+        logits = self.head(embedding).squeeze(-1)
+
+        if return_output:
+            return BaseModelOutput(logits=logits, embeddings=embedding, extras={})
+        return logits
 
 
 class GATDetector(nn.Module):
@@ -93,26 +104,33 @@ class GATDetector(nn.Module):
             raise ImportError("torch_geometric is required")
 
         self.dropout = dropout
+        self.attention_heads = attention_heads
         self.convs = nn.ModuleList()
         self.convs.append(GATConv(in_channels, hidden_channels, heads=attention_heads, dropout=dropout))
         for _ in range(num_layers - 1):
             self.convs.append(GATConv(hidden_channels * attention_heads, hidden_channels, heads=1, dropout=dropout))
         self.head = nn.Linear(hidden_channels, 1)
 
-    def forward(self, x: Tensor, edge_index: Tensor) -> tuple[Tensor, Tensor]:
+    def forward(
+        self, x: Tensor, edge_index: Tensor, return_output: bool = False,
+    ) -> Tensor | BaseModelOutput:
         for conv in self.convs:
             x = conv(x, edge_index)
             x = F.elu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
         embedding = x
-        logit = self.head(embedding).squeeze(-1)
-        return logit, embedding
+        logits = self.head(embedding).squeeze(-1)
+
+        if return_output:
+            return BaseModelOutput(logits=logits, embeddings=embedding, extras={})
+        return logits
 
 
 DETECTOR_REGISTRY: dict[str, type[nn.Module]] = {
     "gcn": GCNDetector,
     "sage": SAGEDetector,
     "gat": GATDetector,
+    "bwgnn": BWGNNDetector,
 }
 
 

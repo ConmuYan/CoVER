@@ -36,10 +36,11 @@ class EvidenceAdapter:
         node_ids: list[int],
         base_logits: Tensor,
         embeddings: Tensor,
+        extras: dict[str, Tensor] | None = None,
     ) -> list[EvidenceCard]:
         cards = []
         for node_id in node_ids:
-            card = self._extract_single(node_id, base_logits, embeddings)
+            card = self._extract_single(node_id, base_logits, embeddings, extras)
             cards.append(card)
         return cards
 
@@ -48,6 +49,7 @@ class EvidenceAdapter:
         node_id: int,
         base_logits: Tensor,
         embeddings: Tensor,
+        extras: dict[str, Tensor] | None = None,
     ) -> EvidenceCard:
         degree = self.degrees[node_id].item()
         degree_level = self._level(degree=degree)
@@ -69,13 +71,35 @@ class EvidenceAdapter:
             neighbor_consistency = "low"
 
         logit = base_logits[node_id].item()
-        detector_signal = "embedding_neighbor_discrepancy_high" if discrepancy > 2.0 else "normal"
-        detector_signal_strength = "strong" if abs(logit) > 1.0 else "weak"
+
+        if extras and "high_freq_response" in extras:
+            hf_response = extras["high_freq_response"]
+            hf_value = hf_response[node_id].item()
+            q_low = hf_response.quantile(0.33).item()
+            q_high = hf_response.quantile(0.66).item()
+
+            if hf_value > q_high:
+                detector_signal = "high_frequency_response_high"
+                detector_signal_strength = "strong"
+            elif hf_value > q_low:
+                detector_signal = "high_frequency_response_medium"
+                detector_signal_strength = "moderate"
+            else:
+                detector_signal = "high_frequency_response_low"
+                detector_signal_strength = "weak"
+        else:
+            detector_signal = "embedding_neighbor_discrepancy_high" if discrepancy > 2.0 else "normal"
+            detector_signal_strength = "strong" if abs(logit) > 1.0 else "weak"
 
         counter_signal = "benign_neighbor_signal_low" if neighbor_consistency == "low" else "benign_neighbor_signal_high"
 
-        allowed_support_ids = [f"neighbor_{nid.item()}" for nid in neighbor_ids[:5]]
-        allowed_counter_ids = [f"counter_{nid.item()}" for nid in neighbor_ids[:3]]
+        allowed_support_ids = [
+            "degree_level", "neighbor_consistency", "feature_neighbor_discrepancy",
+            "detector_signal", "detector_signal_strength",
+        ] + [f"neighbor_{nid.item()}" for nid in neighbor_ids[:5]]
+        allowed_counter_ids = [
+            "counter_signal",
+        ] + [f"counter_{nid.item()}" for nid in neighbor_ids[:3]]
 
         calibration = CalibrationChannel(
             base_score=torch.sigmoid(base_logits[node_id]).item(),

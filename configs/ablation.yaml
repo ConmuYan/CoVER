@@ -1,8 +1,8 @@
 project: cover_fd
 dataset:
   name: yelpchi
-  path: /path/to/yelpchi.pt
-  format: pt
+  path: datasets/YelpChi.mat
+  format: mat
   scarcity_ratio: 1.0
   split_seed: 0
 

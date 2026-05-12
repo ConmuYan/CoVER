@@ -18,7 +18,7 @@ try:
 except ImportError:
     Data = Any
 
-from data.split import generate_masks, apply_scarcity
+from data.split import generate_masks, stratified_split, apply_scarcity, save_split
 
 
 def load_tiny_graph(
@@ -151,6 +151,10 @@ def load_fraud_dataset(
     format: str | None = None,
     seed: int = 0,
     scarcity_ratio: float = 1.0,
+    split_mode: str = "supervised",
+    train_ratio: float = 0.7,
+    val_test_ratio: list[int] | None = None,
+    stratified: bool = False,
 ) -> Data:
     """Load a graph fraud detection dataset.
 
@@ -166,21 +170,43 @@ def load_fraud_dataset(
         format: File format (pt/pkl/npz/mat). Auto-detected if None.
         seed: Random seed for splits.
         scarcity_ratio: Fraction of train labels to keep.
+        split_mode: Split mode (supervised/semi-supervised).
+        train_ratio: Training set ratio (default 0.7).
+        val_test_ratio: Validation to test ratio [val, test] (default [1, 2]).
+        stratified: Use stratified split preserving class distribution.
 
     Returns:
         PyG Data object with x, edge_index, y, train_mask, val_mask, test_mask.
     """
+    if val_test_ratio is None:
+        val_test_ratio = [1, 2]
+
+    # Calculate actual ratios from train_ratio and val_test_ratio
+    val_ratio = (1 - train_ratio) * val_test_ratio[0] / sum(val_test_ratio)
+    test_ratio = (1 - train_ratio) * val_test_ratio[1] / sum(val_test_ratio)
+    ratios = (train_ratio, val_ratio, test_ratio)
+
     if name == "tiny":
         data = load_tiny_graph(seed=seed)
+        if stratified:
+            data = stratified_split(data, seed=seed, ratios=ratios)
     elif name == "synthetic_small":
         data = load_synthetic_graph(num_nodes=500, seed=seed)
+        if stratified:
+            data = stratified_split(data, seed=seed, ratios=ratios)
     elif name == "synthetic_medium":
         data = load_synthetic_graph(num_nodes=2000, seed=seed)
+        if stratified:
+            data = stratified_split(data, seed=seed, ratios=ratios)
     elif name in ("yelpchi", "amazon"):
         if path is None:
             raise ValueError(f"Path required for dataset '{name}'")
         data = load_from_mat(path)
-        data = generate_masks(data, seed=seed)
+        if stratified:
+            data = stratified_split(data, seed=seed, ratios=ratios)
+        else:
+            data = generate_masks(data, seed=seed, ratios=ratios)
+        save_split(data, name, seed, split_mode, train_ratio, val_test_ratio, stratified=stratified)
     elif name == "custom":
         if path is None:
             raise ValueError("Path required for custom dataset")
@@ -194,7 +220,10 @@ def load_fraud_dataset(
             raise ValueError(f"Unknown format: {ext}. Supported: {list(_LOADERS.keys())}")
         data = loader(path)
         if not hasattr(data, "train_mask") or data.train_mask is None:
-            data = generate_masks(data, seed=seed)
+            if stratified:
+                data = stratified_split(data, seed=seed, ratios=ratios)
+            else:
+                data = generate_masks(data, seed=seed, ratios=ratios)
     else:
         raise ValueError(f"Unknown dataset: {name}")
 
