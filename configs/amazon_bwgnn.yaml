@@ -1,0 +1,41 @@
+project: cover_fd
+dataset:
+  name: amazon
+  path: /path/to/amazon.pt
+  format: pt
+  scarcity_ratio: 1.0
+  split_seed: 0
+
+model:
+  name: bwgnn
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.5
+  num_coeffs: 3
+
+train:
+  seed: 0
+  epochs: 300
+  debug_epochs: 3
+  lr: 0.005
+  weight_decay: 0.0005
+  patience: 50
+  device: cuda
+
+evidence:
+  trace_size: 2000
+  teacher: rule
+  use_verifier: true
+  use_counter: true
+
+reasoner:
+  hidden_dim: 128
+  evidence_emb_dim: 16
+  rho: 0.3
+  lambda_evi: 0.5
+  use_type_loss: true
+  use_evidence_loss: true
+  use_residual_gate: true
+
+eval:
+  k_values: [50, 100, 200]

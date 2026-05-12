@@ -1,0 +1,52 @@
+project: cover_fd
+dataset:
+  name: yelpchi
+  path: /path/to/yelpchi.pt
+  format: pt
+  scarcity_ratio: 1.0
+  split_seed: 0
+
+model:
+  name: gcn
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.5
+
+train:
+  seed: 0
+  epochs: 300
+  debug_epochs: 3
+  lr: 0.005
+  weight_decay: 0.0005
+  patience: 50
+  device: cuda
+
+evidence:
+  trace_size: 2000
+  teacher: rule
+  use_verifier: false
+  use_counter: false
+
+reasoner:
+  hidden_dim: 128
+  evidence_emb_dim: 16
+  rho: 0.0
+  lambda_evi: 0.0
+  use_type_loss: false
+  use_evidence_loss: false
+  use_residual_gate: false
+
+eval:
+  k_values: [50, 100, 200]
+
+ablation:
+  name: full
+  variants:
+    - full
+    - no_verifier
+    - no_counter
+    - no_type_loss
+    - no_evidence_loss
+    - no_residual_gate
+    - score_visible_prompt
+    - rule_teacher
