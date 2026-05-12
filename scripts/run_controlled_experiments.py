@@ -45,10 +45,12 @@ def run_command(cmd: list[str], env: dict[str, str] | None = None, step_name: st
     return True, elapsed
 
 
-def check_stage1_complete(dataset: str, model: str, seed: int) -> bool:
-    from utils.paths import get_base_checkpoint_path, get_stage1_metrics_path
-    ckpt = get_base_checkpoint_path(dataset, model, seed)
-    metrics = get_stage1_metrics_path(dataset, model, seed)
+def check_stage1_complete(dataset: str, model: str, seed: int, run_name: str = "base") -> bool:
+    from utils.paths import get_checkpoint_dir, get_results_dir
+    ckpt_dir = get_checkpoint_dir(dataset, model, run_name, seed)
+    ckpt = ckpt_dir / "base.pt"
+    results_dir = get_results_dir(dataset, model, run_name, seed)
+    metrics = results_dir / "stage1_metrics.json"
     return ckpt.exists() and metrics.exists()
 
 
@@ -84,6 +86,14 @@ def main():
     parser.add_argument("--confirm_large_qwen_run", action="store_true")
     parser.add_argument("--dry_run", action="store_true")
     parser.add_argument("--stratified", action="store_true", help="Use stratified split")
+    parser.add_argument("--run_name", type=str, default=None, help="Custom run_name for Stage 3 (overrides teacher-based naming)")
+    parser.add_argument("--gate_mode", type=str, default=None, help="Gate mode for reasoner")
+    parser.add_argument("--rho", type=float, default=None, help="Rho for reasoner")
+    parser.add_argument("--lambda_evi", type=float, default=None, help="Lambda evidence weight")
+    parser.add_argument("--delta_scale", type=float, default=None, help="Delta scale for safe residual")
+    parser.add_argument("--residual_l2_weight", type=float, default=None, help="Residual L2 regularization weight")
+    parser.add_argument("--max_shift_penalty_weight", type=float, default=None, help="Max shift penalty weight")
+    parser.add_argument("--max_abs_shift", type=float, default=None, help="Max absolute shift")
     args = parser.parse_args()
 
     if "qwen" in args.teachers and args.qwen_trace_size > 64 and not args.confirm_large_qwen_run:
@@ -132,25 +142,48 @@ def main():
             seed_results = {"dataset": dataset, "seed": seed, "timings": {}}
 
             if not args.skip_stage1:
-                if check_stage1_complete(dataset, args.model, seed):
+                base_run_name = args.run_name or "base"
+                if check_stage1_complete(dataset, args.model, seed, base_run_name):
                     print(f"[SKIP] Stage 1 already complete")
                 else:
-                    cmd = [
-                        python, str(project_root / "scripts" / "train_stage1.py"),
-                        "--config", str(config_path),
-                        "--run_name", "base",
-                        "--seed", str(seed),
-                    ]
-                    if args.stratified:
-                        cmd.append("--stratified")
-                    ok, elapsed = run_command(cmd, train_env, f"Stage 1: {dataset} seed={seed}", args.dry_run)
-                    seed_results["timings"]["stage1"] = elapsed
-                    if not ok:
-                        all_results[f"{dataset}_{seed}"] = seed_results
-                        continue
+                    # If run_name is not "base", copy existing base checkpoint
+                    if base_run_name != "base" and check_stage1_complete(dataset, args.model, seed, "base"):
+                        print(f"[COPY] Copying base checkpoint to {base_run_name}")
+                        import shutil
+                        src_dir = Path("artifacts") / "checkpoints" / dataset / args.model / "base" / f"seed_{seed}"
+                        dst_dir = Path("artifacts") / "checkpoints" / dataset / args.model / base_run_name / f"seed_{seed}"
+                        dst_dir.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src_dir / "base.pt", dst_dir / "base.pt")
+                        
+                        src_results = Path("artifacts") / "results" / dataset / args.model / "base" / f"seed_{seed}"
+                        dst_results = Path("artifacts") / "results" / dataset / args.model / base_run_name / f"seed_{seed}"
+                        dst_results.mkdir(parents=True, exist_ok=True)
+                        for f in src_results.glob("*.json"):
+                            shutil.copy2(f, dst_results / f.name)
+                        
+                        src_logs = Path("artifacts") / "logs" / dataset / args.model / "base" / f"seed_{seed}"
+                        dst_logs = Path("artifacts") / "logs" / dataset / args.model / base_run_name / f"seed_{seed}"
+                        if src_logs.exists():
+                            dst_logs.mkdir(parents=True, exist_ok=True)
+                            for f in src_logs.glob("*.json"):
+                                shutil.copy2(f, dst_logs / f.name)
+                    else:
+                        cmd = [
+                            python, str(project_root / "scripts" / "train_stage1.py"),
+                            "--config", str(config_path),
+                            "--run_name", base_run_name,
+                            "--seed", str(seed),
+                        ]
+                        if args.stratified:
+                            cmd.append("--stratified")
+                        ok, elapsed = run_command(cmd, train_env, f"Stage 1: {dataset} seed={seed}", args.dry_run)
+                        seed_results["timings"]["stage1"] = elapsed
+                        if not ok:
+                            all_results[f"{dataset}_{seed}"] = seed_results
+                            continue
 
             if "rule" in args.teachers and not args.skip_rule:
-                run_name = "rule_stratified" if args.stratified else "rule"
+                run_name = args.run_name or ("rule_stratified" if args.stratified else "rule")
                 if not args.skip_stage3 or not check_err_complete(dataset, args.model, run_name, seed):
                     cmd = [
                         python, str(project_root / "scripts" / "generate_stage2_err.py"),
@@ -178,6 +211,20 @@ def main():
                             "--run_name", run_name,
                             "--seed", str(seed),
                         ]
+                        if args.gate_mode:
+                            cmd.extend(["--gate_mode", args.gate_mode])
+                        if args.rho is not None:
+                            cmd.extend(["--rho", str(args.rho)])
+                        if args.lambda_evi is not None:
+                            cmd.extend(["--lambda_evi", str(args.lambda_evi)])
+                        if args.delta_scale is not None:
+                            cmd.extend(["--delta_scale", str(args.delta_scale)])
+                        if args.residual_l2_weight is not None:
+                            cmd.extend(["--residual_l2_weight", str(args.residual_l2_weight)])
+                        if args.max_shift_penalty_weight is not None:
+                            cmd.extend(["--max_shift_penalty_weight", str(args.max_shift_penalty_weight)])
+                        if args.max_abs_shift is not None:
+                            cmd.extend(["--max_abs_shift", str(args.max_abs_shift)])
                         ok, elapsed = run_command(cmd, train_env, f"Stage 3 Rule: {dataset} seed={seed}", args.dry_run)
                         seed_results["timings"]["stage3_rule"] = elapsed
                         if not ok:
@@ -191,6 +238,7 @@ def main():
                         "--stage", "stage3",
                         "--run_name", run_name,
                         "--seed", str(seed),
+                        "--threshold_mode", "val_macro_f1",
                     ]
                     if args.stratified:
                         cmd.append("--stratified")
@@ -214,7 +262,7 @@ def main():
                     run_command(cmd, None, f"Compare Stage1 vs Stage3 Rule: {dataset} seed={seed}", args.dry_run)
 
             if "qwen" in args.teachers and not args.skip_qwen:
-                run_name = "qwen_stratified" if args.stratified else "qwen"
+                run_name = args.run_name or ("qwen_stratified" if args.stratified else "qwen")
                 if not args.skip_stage3 or not check_err_complete(dataset, args.model, run_name, seed):
                     cmd = [
                         python, str(project_root / "scripts" / "generate_stage2_err.py"),
@@ -243,6 +291,20 @@ def main():
                             "--run_name", run_name,
                             "--seed", str(seed),
                         ]
+                        if args.gate_mode:
+                            cmd.extend(["--gate_mode", args.gate_mode])
+                        if args.rho is not None:
+                            cmd.extend(["--rho", str(args.rho)])
+                        if args.lambda_evi is not None:
+                            cmd.extend(["--lambda_evi", str(args.lambda_evi)])
+                        if args.delta_scale is not None:
+                            cmd.extend(["--delta_scale", str(args.delta_scale)])
+                        if args.residual_l2_weight is not None:
+                            cmd.extend(["--residual_l2_weight", str(args.residual_l2_weight)])
+                        if args.max_shift_penalty_weight is not None:
+                            cmd.extend(["--max_shift_penalty_weight", str(args.max_shift_penalty_weight)])
+                        if args.max_abs_shift is not None:
+                            cmd.extend(["--max_abs_shift", str(args.max_abs_shift)])
                         if args.stratified:
                             cmd.append("--stratified")
                         ok, elapsed = run_command(cmd, train_env, f"Stage 3 Qwen: {dataset} seed={seed}", args.dry_run)
@@ -258,6 +320,7 @@ def main():
                         "--stage", "stage3",
                         "--run_name", run_name,
                         "--seed", str(seed),
+                        "--threshold_mode", "val_macro_f1",
                     ]
                     if args.stratified:
                         cmd.append("--stratified")

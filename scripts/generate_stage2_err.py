@@ -33,6 +33,7 @@ def main():
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--stratified", action="store_true", help="Use stratified split")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for LLM inference")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -144,6 +145,7 @@ def main():
             enable_verifier_retry=enable_retry,
             max_verifier_retries=max_verifier_retries,
             max_parse_retries=max_parse_retries,
+            batch_size=args.batch_size,
         )
         teacher_name = f"llm_{llm_config.get('backend', 'mock')}"
     else:
@@ -166,42 +168,65 @@ def main():
 
     rule_teacher = RuleTeacher()
 
-    for card in cards:
-        payload = build_teacher_payload(card)
-        try:
-            assert_score_blind_payload(payload)
-        except ValueError as e:
-            print(f"Score-blind check failed: {e}")
-            score_blind_passed = False
-            continue
+    if args.teacher == "llm" and llm_teacher is not None:
+        valid_cards = []
+        valid_payloads = []
+        
+        for card in cards:
+            payload = build_teacher_payload(card)
+            try:
+                assert_score_blind_payload(payload)
+                valid_cards.append(card)
+                valid_payloads.append(payload)
+                all_prompts.append({
+                    "node_id": card.node_id,
+                    "attempt_id": 0,
+                    "attempt_type": "initial",
+                    "messages": build_llm_messages(payload),
+                })
+            except ValueError as e:
+                print(f"Score-blind check failed for node {card.node_id}: {e}")
+                score_blind_passed = False
 
-        if args.teacher == "llm":
-            messages = build_llm_messages(payload)
-            all_prompts.append({
+        print(f"Processing {len(valid_payloads)} valid cards with batch size {args.batch_size}...")
+        
+        if enable_retry:
+            batch_results = llm_teacher.generate_batch_with_verifier_retry(
+                valid_payloads, verifier, valid_cards
+            )
+        else:
+            batch_results = llm_teacher.generate_batch(valid_payloads)
+        
+        for i, (err, metadata) in enumerate(batch_results):
+            card = valid_cards[i]
+            all_raw_outputs.append({
                 "node_id": card.node_id,
                 "attempt_id": 0,
                 "attempt_type": "initial",
-                "messages": messages,
+                "raw_output": metadata.get("raw_output"),
+                "parsed_ok": metadata.get("parsed_ok", False),
+                "parse_error": metadata.get("parse_error"),
             })
 
             if enable_retry:
-                err, metadata = llm_teacher.generate_with_verifier_retry(payload, verifier, card)
                 attempts = metadata.get("attempts", [])
-                for i, attempt in enumerate(attempts):
+                for j, attempt in enumerate(attempts[1:], 1):
                     all_raw_outputs.append({
                         "node_id": card.node_id,
-                        "attempt_id": i,
-                        "attempt_type": "initial" if i == 0 else "verifier_retry",
+                        "attempt_id": j,
+                        "attempt_type": "verifier_retry",
                         "raw_output": attempt.get("raw_output"),
                         "parsed_ok": attempt.get("parsed_ok", False),
                         "parse_error": attempt.get("parse_error"),
-                        "verifier_accepted": metadata.get("final_status") == "accepted" or metadata.get("final_status") == "accepted_after_retry",
+                        "verifier_accepted": metadata.get("final_status") in ("accepted", "accepted_after_retry"),
                         "reject_reasons": attempt.get("reject_reasons", []),
                     })
 
                 if metadata.get("final_status") in ("accepted", "accepted_after_retry"):
-                    num_accepted_after_initial += 1 if metadata.get("accepted_after_retry") is False else 0
-                    num_accepted_after_retry += 1 if metadata.get("accepted_after_retry") is True else 0
+                    if metadata.get("accepted_after_retry"):
+                        num_accepted_after_retry += 1
+                    else:
+                        num_accepted_after_initial += 1
                     if metadata.get("verifier_retries", 0) > 0:
                         num_verifier_retried += 1
                     accepted_errs.append(err)
@@ -212,16 +237,6 @@ def main():
                         "num_attempts": len(attempts),
                     })
             else:
-                err, metadata = llm_teacher.generate(payload)
-                all_raw_outputs.append({
-                    "node_id": card.node_id,
-                    "attempt_id": 0,
-                    "attempt_type": "initial",
-                    "raw_output": metadata.get("raw_output"),
-                    "parsed_ok": metadata.get("parsed_ok", False),
-                    "parse_error": metadata.get("parse_error"),
-                })
-
                 if err is None:
                     err = ERR(
                         node_id=card.node_id,
@@ -231,16 +246,37 @@ def main():
                         summary="LLM parse failed",
                     )
 
-                accepted, reasons = verifier.verify(err, card)
-                if accepted:
-                    accepted_errs.append(err)
-                    num_accepted_after_initial += 1
+                if metadata.get("parsed_ok", False):
+                    accepted, reasons = verifier.verify(err, card)
+                    if accepted:
+                        accepted_errs.append(err)
+                        num_accepted_after_initial += 1
+                    else:
+                        rejected_errs.append({"err": err, "reasons": reasons, "num_attempts": 1})
                 else:
-                    rejected_errs.append({"err": err, "reasons": reasons, "num_attempts": 1})
+                    rejected_errs.append({"err": err, "reasons": ["parse_failed"], "num_attempts": 1})
 
+            if err is None:
+                err = ERR(
+                    node_id=card.node_id,
+                    risk_type="weak_or_uncertain_evidence",
+                    supporting_evidence=[],
+                    counter_evidence=[],
+                    summary="LLM parse failed",
+                )
             all_errs.append(err)
             card_map[err.node_id] = card
-        else:
+
+    else:
+        for card in cards:
+            payload = build_teacher_payload(card)
+            try:
+                assert_score_blind_payload(payload)
+            except ValueError as e:
+                print(f"Score-blind check failed: {e}")
+                score_blind_passed = False
+                continue
+
             err = rule_teacher.generate(card)
             all_errs.append(err)
             card_map[err.node_id] = card
@@ -381,7 +417,7 @@ def main():
             "enable_verifier_retry": enable_retry,
             "max_verifier_retries": max_verifier_retries,
             "max_parse_retries": max_parse_retries,
-            "num_initial_calls": len(cards),
+            "num_initial_calls": len(valid_payloads) if args.teacher == "llm" else len(cards),
             "num_total_llm_calls": len(all_raw_outputs),
             "num_parse_success": num_parse_success,
             "num_parse_failed": num_parse_failed,
@@ -393,6 +429,7 @@ def main():
             "final_acceptance_rate": acceptance_rate,
             "max_new_tokens": llm_config.get("max_new_tokens", 256),
             "temperature": llm_config.get("temperature", 0.0),
+            "batch_size": args.batch_size,
         })
 
     with open(out_dir / "stage2_stats.json", "w") as f:
@@ -402,6 +439,7 @@ def main():
     print(f"  Teacher: {args.teacher}")
     if args.teacher == "llm":
         print(f"  LLM Backend: {llm_config.get('backend', 'mock')}")
+        print(f"  Batch size: {args.batch_size}")
         print(f"  Verifier retry: {'enabled' if enable_retry else 'disabled'}")
     print(f"  Trace nodes: {len(trace_nodes)}")
     print(f"  Evidence cards: {len(cards)}")
@@ -412,6 +450,7 @@ def main():
         print(f"  Accepted after initial: {num_accepted_after_initial}")
         print(f"  Accepted after retry: {num_accepted_after_retry}")
     print(f"  Elapsed: {elapsed:.2f}s")
+    print(f"  Speed: {len(trace_nodes)/elapsed:.1f} nodes/sec")
     print(f"\nArtifacts saved to: {out_dir}")
 
 
