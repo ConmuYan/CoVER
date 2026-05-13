@@ -11,6 +11,55 @@ EVIDENCE_SLOTS = [
     "detector_signal",
     "detector_signal_strength",
     "counter_signal",
+    "degree_percentile_bucket",
+    "neighbor_degree_skew_bucket",
+    "two_hop_consistency_bucket",
+    "feature_neighbor_cosine_bucket",
+    "embedding_neighbor_cosine_bucket",
+    "feature_embedding_disagreement_bucket",
+    "bwgnn_low_band_energy_bucket",
+    "bwgnn_mid_band_energy_bucket",
+    "bwgnn_high_band_energy_bucket",
+    "bwgnn_high_low_energy_ratio_bucket",
+    "message_residual_bucket",
+    "closer_to_fraud_prototype",
+    "closer_to_benign_prototype",
+    "prototype_conflict_level",
+]
+
+# Graph evidence tokens (score-blind)
+GRAPH_EVIDENCE_TOKENS = [
+    # Spectral / BWGNN
+    "HF_RATIO_TOP10",
+    "HF_RATIO_HIGH",
+    "HF_RATIO_LOW",
+    "BAND_ENERGY_CONFLICT_HIGH",
+    "LOW_HIGH_BAND_MISMATCH",
+
+    # Feature-structure conflict
+    "FEAT_NEIGH_COS_BOTTOM10",
+    "EMB_NEIGH_COS_BOTTOM10",
+    "FEATURE_EMBED_DISAGREE_HIGH",
+
+    # Prototype relation
+    "PROTO_FRAUD_CLOSE",
+    "PROTO_BENIGN_CLOSE",
+    "PROTO_CONFLICT_HIGH",
+
+    # Normal-structure deviation
+    "NORMAL_STRUCTURE_DIST_HIGH",
+    "NORMAL_PATTERN_DEVIATION_HIGH",
+
+    # Clean-view / interference
+    "INTERFERING_EDGE_RATIO_HIGH",
+    "CLEAN_VIEW_SHIFT_HIGH",
+    "RAW_TO_CLEAN_CONFLICT",
+]
+
+# Optional tokens (don't block microbenchmark)
+OPTIONAL_GRAPH_TOKENS = [
+    "LOCAL_CURVATURE_OUTLIER_HIGH",
+    "EDGE_CURVATURE_VAR_HIGH",
 ]
 
 REASON_TYPES = [
@@ -22,6 +71,12 @@ REASON_TYPES = [
     "weak_or_uncertain_evidence",
 ]
 
+EVIDENCE_DIRECTIONS = ["increase_risk", "decrease_risk", "uncertain"]
+EVIDENCE_STRENGTHS = ["weak", "moderate", "strong"]
+
+DIRECTION_TO_ID = {d: i for i, d in enumerate(EVIDENCE_DIRECTIONS)}
+STRENGTH_TO_ID = {s: i for i, s in enumerate(EVIDENCE_STRENGTHS)}
+
 SPECIAL_TOKENS = ["<PAD>", "<UNK>", "<MISSING>"]
 
 VALUE_VOCAB: dict[str, int] = {}
@@ -32,13 +87,16 @@ for token in SPECIAL_TOKENS:
 
 _all_values = set()
 for slot in EVIDENCE_SLOTS:
-    _all_values.update(["low", "medium", "high", "normal", "strong", "weak",
+    _all_values.update(["low", "medium", "high", "normal", "strong", "weak", "unknown",
                         "embedding_neighbor_discrepancy_high",
                         "high_frequency_response_high",
+                        "high_frequency_response_medium",
+                        "high_frequency_response_low",
                         "spectral_energy_shift_high",
                         "bandpass_response_high",
                         "benign_neighbor_signal_low",
-                        "benign_neighbor_signal_high"])
+                        "benign_neighbor_signal_high",
+                        "moderate"])
 
 for val in sorted(_all_values):
     if val not in VALUE_VOCAB:
@@ -86,3 +144,12 @@ def encode_err_targets(err: ERR) -> dict:
 
 def get_num_values() -> int:
     return len(VALUE_VOCAB)
+
+
+def encode_direction_target(err: ERR) -> dict:
+    direction_id = DIRECTION_TO_ID.get(err.evidence_direction, DIRECTION_TO_ID["uncertain"])
+    return {"direction_id": direction_id}
+
+
+def get_direction_num_classes() -> int:
+    return len(EVIDENCE_DIRECTIONS)
