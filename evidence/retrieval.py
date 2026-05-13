@@ -42,6 +42,7 @@ class HybridRetriever:
         self.jaccard_weight = float(jaccard_weight)
         self.cosine_weight = float(cosine_weight)
         self._idf: dict[str, float] = {}
+        self._idf_vocab: set[str] = set()
         self._idf_fitted = False
         self._train_doc_count = 0
 
@@ -56,6 +57,7 @@ class HybridRetriever:
                 doc_freq[token] = doc_freq.get(token, 0) + 1
 
         self._train_doc_count = num_docs
+        self._idf_vocab = set(doc_freq)
         self._idf = {
             token: math.log((num_docs + 1) / (df + 1)) + 1.0
             for token, df in doc_freq.items()
@@ -210,7 +212,9 @@ class HybridRetriever:
 
     def _idf_weight(self, token: str) -> float:
         if not self._idf_fitted:
-            return 1.0
+            return 0.0
+        if token not in self._idf_vocab:
+            return 0.0
         return self._idf.get(token, 1.0)
 
 
