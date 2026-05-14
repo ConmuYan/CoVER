@@ -8,6 +8,7 @@ from pathlib import Path
 
 import torch
 import yaml
+from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -33,7 +34,7 @@ def main():
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--stratified", action="store_true", help="Use stratified split")
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for LLM inference")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for LLM inference")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -81,17 +82,19 @@ def main():
         print(f"Use --confirm_large_llm_run to proceed.")
         sys.exit(1)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     model = build_detector(
         name=model_name,
         in_channels=data.x.shape[1],
         hidden_channels=config["model"].get("hidden_dim", 64),
         num_layers=config["model"].get("num_layers", 2),
         dropout=config["model"].get("dropout", 0.5),
-    )
+    ).to(device)
 
     checkpoint_path = get_base_checkpoint_path(dataset_name, model_name, seed)
     if checkpoint_path.exists():
-        state = torch.load(checkpoint_path, weights_only=True)
+        state = torch.load(checkpoint_path, weights_only=True, map_location=device)
         model.load_state_dict(state)
         print(f"Loaded checkpoint from {checkpoint_path}")
     else:
@@ -100,18 +103,46 @@ def main():
     model.eval()
 
     with torch.no_grad():
-        output = model(data.x, data.edge_index, return_output=True)
-        base_logits = output.logits
-        embeddings = output.embeddings
-        extras = output.extras
+        output = model(data.x.to(device), data.edge_index.to(device), return_output=True)
+        base_logits = output.logits.cpu()
+        embeddings = output.embeddings.cpu()
+        extras_cpu = {}
+        if output.extras:
+            for k, v in output.extras.items():
+                extras_cpu[k] = v.cpu() if isinstance(v, torch.Tensor) else v
+        extras = extras_cpu
 
-    train_indices = data.train_mask.nonzero(as_tuple=True)[0].tolist()
-    if len(train_indices) > trace_size:
-        import random
-        random.seed(seed)
-        trace_nodes = random.sample(train_indices, trace_size)
+    stage2_cfg = config.get("stage2", {})
+    trace_sampler_mode = stage2_cfg.get("trace_sampler", "random")
+
+    if trace_sampler_mode == "error_aware":
+        from evidence.trace_sampler import sample_traces, DEFAULT_RATIOS
+        from utils.paths import get_err_cache_dir
+
+        err_cache_dir = ensure_dir(get_err_cache_dir(dataset_name, model_name, run_name, seed))
+        trace_nodes, sampling_stats = sample_traces(
+            y=data.y,
+            train_mask=data.train_mask,
+            val_mask=data.val_mask if hasattr(data, "val_mask") and data.val_mask is not None else torch.zeros(data.y.shape[0], dtype=torch.bool),
+            base_logits=base_logits,
+            edge_index=data.edge_index,
+            trace_size=trace_size,
+            seed=seed,
+            ratios=DEFAULT_RATIOS,
+            extras=extras,
+            output_dir=err_cache_dir,
+        )
+        print(f"Error-aware sampling: {len(trace_nodes)} nodes from {len(sampling_stats['pool_sizes'])} pools")
+        for pool_name, drawn in sampling_stats["pool_drawn"].items():
+            print(f"  {pool_name}: {drawn}")
     else:
-        trace_nodes = train_indices
+        train_indices = data.train_mask.nonzero(as_tuple=True)[0].tolist()
+        if len(train_indices) > trace_size:
+            import random
+            random.seed(seed)
+            trace_nodes = random.sample(train_indices, trace_size)
+        else:
+            trace_nodes = train_indices
 
     print(f"Selected {len(trace_nodes)} trace nodes")
 
@@ -123,12 +154,13 @@ def main():
 
     start_time = time.time()
 
-    cards = adapter.extract(
+    cards = adapter.extract_batch(
         node_ids=trace_nodes,
         base_logits=base_logits,
         embeddings=embeddings,
         extras=extras,
     )
+    print(f"Extracted {len(cards)} evidence cards")
 
     if args.teacher == "llm":
         from evidence.llm_teacher import OfflineLLMTeacher
@@ -172,7 +204,7 @@ def main():
         valid_cards = []
         valid_payloads = []
         
-        for card in cards:
+        for card in tqdm(cards, desc="Score-blind check", ncols=80):
             payload = build_teacher_payload(card)
             try:
                 assert_score_blind_payload(payload)
@@ -268,7 +300,7 @@ def main():
             card_map[err.node_id] = card
 
     else:
-        for card in cards:
+        for card in tqdm(cards, desc="Rule teacher", ncols=80):
             payload = build_teacher_payload(card)
             try:
                 assert_score_blind_payload(payload)
@@ -364,6 +396,8 @@ def main():
     with open(out_dir / "rejected_err.jsonl", "w") as f:
         for item in rejected_errs:
             err = item["err"]
+            if err is None:
+                continue
             f.write(json.dumps({
                 "node_id": err.node_id,
                 "risk_type": err.risk_type,

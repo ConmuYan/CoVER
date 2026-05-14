@@ -18,7 +18,12 @@ from typing import Any
 import torch
 
 from evidence.json_utils import parse_llm_err
-from evidence.prompt import build_llm_messages, build_retry_messages
+from evidence.prompt import (
+    build_llm_messages,
+    build_retry_messages,
+    build_contrastive_directional_messages,
+    build_contrastive_directional_retry_messages,
+)
 from evidence.schema import ERR
 
 logger = logging.getLogger(__name__)
@@ -41,6 +46,7 @@ class OfflineLLMTeacher:
         max_parse_retries: int = 1,
         batch_size: int = 8,
         compile_model: bool = True,
+        prompt_mode: str = "enhanced",
     ):
         self.backend = backend
         self.model_name_or_path = model_name_or_path
@@ -56,6 +62,7 @@ class OfflineLLMTeacher:
         self.max_parse_retries = max_parse_retries
         self.batch_size = batch_size
         self.compile_model = compile_model
+        self.prompt_mode = prompt_mode
 
         self._model = None
         self._tokenizer = None
@@ -109,19 +116,23 @@ class OfflineLLMTeacher:
         self._model.eval()
         self._model.config.use_cache = True
         
-        if self.compile_model and hasattr(torch, 'compile'):
-            try:
-                logger.info("Compiling model with torch.compile...")
-                self._model = torch.compile(self._model, mode="reduce-overhead", fullgraph=True)
-                logger.info("Model compiled successfully")
-            except Exception as e:
-                logger.warning("torch.compile failed: %s, using eager mode", e)
+        # Disable torch.compile — causes extreme first-run latency on GPU
+        # if self.compile_model and hasattr(torch, 'compile'):
+        #     try:
+        #         logger.info("Compiling model with torch.compile...")
+        #         self._model = torch.compile(self._model, mode="reduce-overhead", fullgraph=True)
+        #         logger.info("Model compiled successfully")
+        #     except Exception as e:
+        #         logger.warning("torch.compile failed: %s, using eager mode", e)
         
         logger.info("Model loaded successfully with dtype=%s", torch_dtype)
 
     @torch.inference_mode()
     def generate(self, payload: dict[str, Any]) -> tuple[ERR | None, dict[str, Any]]:
-        messages = build_llm_messages(payload)
+        if self.prompt_mode == "contrastive_directional":
+            messages = build_contrastive_directional_messages(payload)
+        else:
+            messages = build_llm_messages(payload)
         node_id = payload.get("node_id", 0)
 
         metadata: dict[str, Any] = {
@@ -147,7 +158,11 @@ class OfflineLLMTeacher:
         payloads: list[dict[str, Any]],
     ) -> list[tuple[ERR | None, dict[str, Any]]]:
         if self.backend == "mock":
-            return [self._generate_mock(p, build_llm_messages(p), {"backend": "mock", "node_id": p.get("node_id", 0)}) for p in payloads]
+            if self.prompt_mode == "contrastive_directional":
+                msgs_fn = build_contrastive_directional_messages
+            else:
+                msgs_fn = build_llm_messages
+            return [self._generate_mock(p, msgs_fn(p), {"backend": "mock", "node_id": p.get("node_id", 0)}) for p in payloads]
         elif self.backend == "transformers_local":
             return self._generate_batch_local(payloads)
         else:
@@ -170,7 +185,8 @@ class OfflineLLMTeacher:
             
             logger.info("Processing batch %d/%d (%d items)", batch_idx + 1, total_batches, len(batch_payloads))
             
-            batch_messages = [build_llm_messages(p) for p in batch_payloads]
+            msgs_fn = build_contrastive_directional_messages if self.prompt_mode == "contrastive_directional" else build_llm_messages
+            batch_messages = [msgs_fn(p) for p in batch_payloads]
             batch_inputs = []
             
             for messages in batch_messages:
@@ -270,7 +286,10 @@ class OfflineLLMTeacher:
             return err, metadata
 
         for retry_idx in range(self.max_verifier_retries):
-            retry_messages = build_retry_messages(payload, err, reasons)
+            if self.prompt_mode == "contrastive_directional":
+                retry_messages = build_contrastive_directional_retry_messages(payload, err, reasons)
+            else:
+                retry_messages = build_retry_messages(payload, err, reasons)
             retry_metadata: dict[str, Any] = {
                 "backend": self.backend, "model_name_or_path": self.model_name_or_path,
                 "node_id": node_id, "retry_count": retry_idx + 1, "attempt_type": "verifier_retry",
@@ -355,6 +374,7 @@ class OfflineLLMTeacher:
             if not retry_payloads:
                 break
             
+            retry_msgs_fn = build_contrastive_directional_retry_messages if self.prompt_mode == "contrastive_directional" else build_retry_messages
             retry_messages_list = []
             for i, payload in enumerate(retry_payloads):
                 err, _ = final_results[retry_indices[i]]
@@ -364,7 +384,7 @@ class OfflineLLMTeacher:
                         supporting_evidence=[], counter_evidence=[], summary="Parse failed",
                     )
                 _, reasons = verifier.verify(err, retry_cards[i])
-                retry_messages_list.append(build_retry_messages(payload, err, reasons))
+                retry_messages_list.append(retry_msgs_fn(payload, err, reasons))
             
             retry_batch_results = self._generate_batch_from_messages(retry_messages_list)
             
@@ -470,6 +490,9 @@ class OfflineLLMTeacher:
         feature_discrepancy = reasoning.get("feature_neighbor_discrepancy", "low")
         neighbor_consistency = reasoning.get("neighbor_consistency", "high")
         degree_level = reasoning.get("degree_level", "medium")
+        counter_signal = reasoning.get("counter_signal", "benign_neighbor_signal_low")
+
+        is_contrastive = self.prompt_mode == "contrastive_directional"
 
         if detector_signal_strength == "strong" and "high_frequency_response" in detector_signal:
             risk_type = "spectral_anomaly"
@@ -488,18 +511,66 @@ class OfflineLLMTeacher:
             supporting = ["degree_level"]
 
         counter = ["counter_signal"]
-        mock_output = json.dumps({
-            "risk_type": risk_type, "supporting_evidence": supporting,
-            "counter_evidence": counter, "summary": f"Mock: {risk_type}",
-        })
+
+        if is_contrastive:
+            has_anomaly_signal = (
+                detector_signal_strength == "strong"
+                or feature_discrepancy == "high"
+                or neighbor_consistency == "low"
+                or degree_level == "high"
+            )
+            has_benign_signal = "benign_neighbor_signal_high" in counter_signal
+
+            if has_anomaly_signal and not has_benign_signal:
+                evidence_direction = "increase_risk"
+                evidence_strength = "strong" if detector_signal_strength == "strong" else "moderate"
+                uncertainty_factors = []
+            elif has_benign_signal and not has_anomaly_signal:
+                evidence_direction = "decrease_risk"
+                evidence_strength = "moderate" if has_benign_signal else "weak"
+                uncertainty_factors = ["counter_signal"]
+            else:
+                evidence_direction = "uncertain"
+                evidence_strength = "weak"
+                uncertainty_factors = ["counter_signal", "degree_level"]
+
+            mock_output = json.dumps({
+                "risk_type": risk_type,
+                "evidence_direction": evidence_direction,
+                "evidence_strength": evidence_strength,
+                "supporting_evidence": supporting,
+                "counter_evidence": counter,
+                "uncertainty_factors": uncertainty_factors,
+                "summary": f"Mock: {risk_type} direction={evidence_direction}",
+            })
+        else:
+            mock_output = json.dumps({
+                "risk_type": risk_type,
+                "supporting_evidence": supporting,
+                "counter_evidence": counter,
+                "summary": f"Mock: {risk_type}",
+            })
 
         metadata["raw_output"] = mock_output
         metadata["parsed_ok"] = True
 
-        err = ERR(
-            node_id=payload.get("node_id", 0), risk_type=risk_type,
-            supporting_evidence=supporting, counter_evidence=counter, summary=f"Mock: {risk_type}",
+        err_kwargs: dict = dict(
+            node_id=payload.get("node_id", 0),
+            risk_type=risk_type,
+            supporting_evidence=supporting,
+            counter_evidence=counter,
+            summary=f"Mock: {risk_type}",
         )
+        if is_contrastive:
+            import dataclasses
+            if hasattr(ERR, "evidence_direction"):
+                err_kwargs["evidence_direction"] = evidence_direction
+            if hasattr(ERR, "evidence_strength"):
+                err_kwargs["evidence_strength"] = evidence_strength
+            if hasattr(ERR, "uncertainty_factors"):
+                err_kwargs["uncertainty_factors"] = uncertainty_factors
+
+        err = ERR(**err_kwargs)
         return err, metadata
 
     @torch.inference_mode()

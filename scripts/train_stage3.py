@@ -19,7 +19,7 @@ from evidence.schema import ERR, ReasoningChannel
 from evidence.vocab import encode_err_targets, encode_reasoning, get_evidence_slots, get_reason_types
 from models.gnn import build_detector
 from models.reasoner import EvidenceReasoner, VALID_GATE_MODES
-from training.losses import compute_reasoner_loss
+from training.losses import compute_cvscd_loss
 from training.metrics import compute_metrics
 from utils.tensorboard import create_logger
 from utils.paths import get_checkpoint_dir, get_logs_dir, get_results_dir, get_err_cache_dir, get_base_checkpoint_path, ensure_dir
@@ -98,7 +98,7 @@ def prepare_targets(
     }
 
 
-def train_one_epoch(reasoner, z, base_logits, targets, train_mask, optimizer, config):
+def train_one_epoch(reasoner, z, base_logits, targets, y, train_mask, optimizer, config):
     reasoner.train()
     device = z.device
 
@@ -111,34 +111,37 @@ def train_one_epoch(reasoner, z, base_logits, targets, train_mask, optimizer, co
     z_train = z[train_mask]
     base_logit_train = base_logits[train_mask]
     evi_ids_train = evi_ids[train_mask]
-    y_train = torch.zeros(train_mask.sum(), dtype=torch.float, device=device)
 
     outputs = reasoner(z_train, base_logit_train, evi_ids_train)
 
-    accepted_train = accepted_mask[train_mask]
     targets_train = {
         "risk_type_id": risk_type_id[train_mask],
         "pos_mask": pos_mask[train_mask],
         "neg_mask": neg_mask[train_mask],
+        "accepted_mask": accepted_mask[train_mask],
     }
 
     rc = config.get("reasoner", {})
-    lambda_evi = rc.get("lambda_evi", 0.5)
-    use_type_loss = rc.get("use_type_loss", True)
-    use_evidence_loss = rc.get("use_evidence_loss", True)
-    residual_l2_weight = rc.get("residual_l2_weight", 0.0)
-    max_shift_penalty_weight = rc.get("max_shift_penalty_weight", 0.0)
-    max_abs_shift = rc.get("max_abs_shift", 2.0)
+    risk_type_names = get_reason_types()
 
-    loss, loss_dict = compute_reasoner_loss(
-        outputs, y_train, targets_train, accepted_train,
-        base_logit=base_logit_train,
-        lambda_evi=lambda_evi,
-        use_type_loss=use_type_loss,
-        use_evidence_loss=use_evidence_loss,
-        residual_l2_weight=residual_l2_weight,
-        max_shift_penalty_weight=max_shift_penalty_weight,
-        max_abs_shift=max_abs_shift,
+    loss, loss_dict = compute_cvscd_loss(
+        outputs,
+        y=y[train_mask],
+        targets=targets_train,
+        train_mask=torch.ones(z_train.shape[0], dtype=torch.bool, device=device),
+        base_logits=base_logit_train,
+        risk_type_names=risk_type_names,
+        pos_weight=rc.get("pos_weight", None),
+        lambda_det=rc.get("lambda_det", 1.0),
+        lambda_err=rc.get("lambda_err", 0.3),
+        lambda_signed=rc.get("lambda_signed", 0.1),
+        lambda_corr=rc.get("lambda_corr", 0.1),
+        correction_weight=rc.get("correction_weight", 2.0),
+        signed_margin=rc.get("signed_margin", 0.2),
+        correction_margin=rc.get("correction_margin", 0.05),
+        anchor_weight=rc.get("anchor_weight", 0.001),
+        max_shift_penalty_weight=rc.get("max_shift_penalty_weight", 0.001),
+        max_allowed_shift=rc.get("max_allowed_shift", 0.3),
     )
 
     optimizer.zero_grad()
@@ -181,6 +184,15 @@ def main():
     parser.add_argument("--residual_l2_weight", type=float, default=None)
     parser.add_argument("--max_shift_penalty_weight", type=float, default=None)
     parser.add_argument("--max_abs_shift", type=float, default=None)
+    parser.add_argument("--lambda_det", type=float, default=None)
+    parser.add_argument("--lambda_err", type=float, default=None)
+    parser.add_argument("--lambda_signed", type=float, default=None)
+    parser.add_argument("--lambda_corr", type=float, default=None)
+    parser.add_argument("--correction_weight", type=float, default=None)
+    parser.add_argument("--signed_margin", type=float, default=None)
+    parser.add_argument("--correction_margin", type=float, default=None)
+    parser.add_argument("--anchor_weight", type=float, default=None)
+    parser.add_argument("--max_allowed_shift", type=float, default=None)
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -201,6 +213,24 @@ def main():
         rc["max_shift_penalty_weight"] = args.max_shift_penalty_weight
     if args.max_abs_shift is not None:
         rc["max_abs_shift"] = args.max_abs_shift
+    if args.lambda_det is not None:
+        rc["lambda_det"] = args.lambda_det
+    if args.lambda_err is not None:
+        rc["lambda_err"] = args.lambda_err
+    if args.lambda_signed is not None:
+        rc["lambda_signed"] = args.lambda_signed
+    if args.lambda_corr is not None:
+        rc["lambda_corr"] = args.lambda_corr
+    if args.correction_weight is not None:
+        rc["correction_weight"] = args.correction_weight
+    if args.signed_margin is not None:
+        rc["signed_margin"] = args.signed_margin
+    if args.correction_margin is not None:
+        rc["correction_margin"] = args.correction_margin
+    if args.anchor_weight is not None:
+        rc["anchor_weight"] = args.anchor_weight
+    if args.max_allowed_shift is not None:
+        rc["max_allowed_shift"] = args.max_allowed_shift
 
     dataset_name = config["dataset"]["name"]
     dataset_path = config["dataset"].get("path")
@@ -311,7 +341,7 @@ def main():
     tb_logger = create_logger(dataset_name, model_name, seed, "stage3")
 
     for epoch in range(1, epochs + 1):
-        loss, loss_dict = train_one_epoch(reasoner, z, base_logits, targets, train_mask, optimizer, config)
+        loss, loss_dict = train_one_epoch(reasoner, z, base_logits, targets, y, train_mask, optimizer, config)
 
         val_metrics = evaluate(reasoner, z, base_logits, targets, val_mask, y, device)
 
@@ -369,9 +399,17 @@ def main():
         "gate_mode": gate_mode,
         "delta_scale": delta_scale,
         "lambda_evi": rc.get("lambda_evi", 0.5),
-        "residual_l2_weight": rc.get("residual_l2_weight", 0.0),
+        "lambda_det": rc.get("lambda_det", 1.0),
+        "lambda_err": rc.get("lambda_err", 0.3),
+        "lambda_signed": rc.get("lambda_signed", 0.1),
+        "lambda_corr": rc.get("lambda_corr", 0.1),
+        "correction_weight": rc.get("correction_weight", 2.0),
+        "signed_margin": rc.get("signed_margin", 0.2),
+        "correction_margin": rc.get("correction_margin", 0.05),
+        "anchor_weight": rc.get("anchor_weight", 0.001),
         "max_shift_penalty_weight": rc.get("max_shift_penalty_weight", 0.0),
         "max_abs_shift": rc.get("max_abs_shift", 2.0),
+        "max_allowed_shift": rc.get("max_allowed_shift", 0.3),
         "num_accepted_err": len(accepted_errs),
     }
 

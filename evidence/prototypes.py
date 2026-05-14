@@ -8,12 +8,15 @@ HARD CONSTRAINTS:
 
 from __future__ import annotations
 
+import logging
 import math
 from collections import Counter
 from typing import Any
 
 import torch
 from torch import Tensor
+
+from evidence.vocab import TOKEN_POLARITY_MAP
 
 SCORE_BLIND_FIELDS = [
     "degree_level",
@@ -95,6 +98,109 @@ def _compute_distinctive_tokens(
     ]
 
 
+def compute_token_polarity_stats(
+    train_mask: Tensor,
+    y: Tensor,
+    graph_tokens: dict[int, list[str]],
+) -> dict[str, Any]:
+    """Compute per-token polarity statistics from train nodes only.
+
+    For each token in graph evidence tokens:
+    - Count occurrences in fraud/benign train nodes
+    - Compute P(token|fraud), P(token|benign)
+    - Compute log_odds and class_contrast_score
+
+    HARD CONSTRAINTS: Only uses train labels. No test labels.
+    """
+    train_indices = train_mask.nonzero(as_tuple=True)[0]
+    train_labels = y[train_indices]
+
+    fraud_indices = train_indices[train_labels == 1]
+    benign_indices = train_indices[train_labels == 0]
+
+    fraud_n = len(fraud_indices)
+    benign_n = len(benign_indices)
+
+    all_tokens: set[str] = set()
+    fraud_token_counts: dict[str, int] = {}
+    benign_token_counts: dict[str, int] = {}
+
+    for idx in fraud_indices:
+        nid = idx.item()
+        if nid in graph_tokens:
+            for token in graph_tokens[nid]:
+                all_tokens.add(token)
+                fraud_token_counts[token] = fraud_token_counts.get(token, 0) + 1
+
+    for idx in benign_indices:
+        nid = idx.item()
+        if nid in graph_tokens:
+            for token in graph_tokens[nid]:
+                all_tokens.add(token)
+                benign_token_counts[token] = benign_token_counts.get(token, 0) + 1
+
+    V = len(all_tokens)
+    if V == 0 or fraud_n == 0 or benign_n == 0:
+        return {
+            "token_polarity_stats": {},
+            "fraud_distinctive_tokens": [],
+            "benign_distinctive_tokens": [],
+            "neutral_tokens": [],
+            "test_label_used": False,
+        }
+
+    laplace_alpha = 1.0
+    token_stats: dict[str, dict] = {}
+    fraud_distinctive: list[str] = []
+    benign_distinctive: list[str] = []
+    neutral_list: list[str] = []
+
+    for token in all_tokens:
+        fc = fraud_token_counts.get(token, 0)
+        bc = benign_token_counts.get(token, 0)
+
+        p_fraud = (fc + laplace_alpha) / (fraud_n + laplace_alpha * V)
+        p_benign = (bc + laplace_alpha) / (benign_n + laplace_alpha * V)
+
+        log_odds = math.log(p_fraud / p_benign) if p_benign > 0 else float('inf')
+        class_contrast_score = abs(log_odds)
+
+        if log_odds > 0.5:
+            polarity = "fraud"
+            fraud_distinctive.append(token)
+        elif log_odds < -0.5:
+            polarity = "benign"
+            benign_distinctive.append(token)
+        else:
+            polarity = "neutral"
+            neutral_list.append(token)
+
+        hand_coded = TOKEN_POLARITY_MAP.get(token)
+        if hand_coded and hand_coded != polarity:
+            logging.getLogger(__name__).warning(
+                "Token '%s': learned '%s' conflicts with hand-coded '%s', using learned",
+                token, polarity, hand_coded,
+            )
+
+        token_stats[token] = {
+            "fraud_count": fc,
+            "benign_count": bc,
+            "p_fraud": round(p_fraud, 6),
+            "p_benign": round(p_benign, 6),
+            "log_odds": round(log_odds, 4),
+            "class_contrast_score": round(class_contrast_score, 4),
+            "polarity": polarity,
+        }
+
+    return {
+        "token_polarity_stats": token_stats,
+        "fraud_distinctive_tokens": sorted(fraud_distinctive),
+        "benign_distinctive_tokens": sorted(benign_distinctive),
+        "neutral_tokens": sorted(neutral_list),
+        "test_label_used": False,
+    }
+
+
 def _build_normal_structure_summary(
     train_tokens: dict[int, dict[str, str]],
 ) -> dict[str, Any]:
@@ -133,6 +239,7 @@ class PrototypeBuilder:
         y: Tensor,
         evidence_tokens: dict[int, dict[str, str]],
         base_preds: Tensor,
+        graph_tokens: dict[int, list[str]] | None = None,
     ) -> dict[str, Any]:
         """Build all prototype banks.
 
@@ -230,7 +337,7 @@ class PrototypeBuilder:
 
         normal_structure_summary = _build_normal_structure_summary(all_train_tokens)
 
-        return {
+        result = {
             "fraud_prototype_bank": fraud_bank,
             "benign_prototype_bank": benign_bank,
             "train_fn_bank": fn_bank,
@@ -240,9 +347,16 @@ class PrototypeBuilder:
             "normal_structure_summary": normal_structure_summary,
         }
 
+        if graph_tokens is not None:
+            result["token_polarity_stats_full"] = compute_token_polarity_stats(
+                train_mask, y, graph_tokens,
+            )
+
+        return result
+
     @staticmethod
     def _filter_score_blind(tokens: dict[str, str]) -> dict[str, str]:
         return {k: v for k, v in tokens.items() if k not in FORBIDDEN_FIELDS}
 
 
-__all__ = ["PrototypeBuilder"]
+__all__ = ["PrototypeBuilder", "compute_token_polarity_stats"]

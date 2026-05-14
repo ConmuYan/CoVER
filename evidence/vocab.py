@@ -27,40 +27,56 @@ EVIDENCE_SLOTS = [
     "prototype_conflict_level",
 ]
 
-# Graph evidence tokens (score-blind)
-GRAPH_EVIDENCE_TOKENS = [
-    # Spectral / BWGNN
+TOKEN_POLARITY_FRAUD = frozenset({
     "HF_RATIO_TOP10",
     "HF_RATIO_HIGH",
-    "HF_RATIO_LOW",
     "BAND_ENERGY_CONFLICT_HIGH",
     "LOW_HIGH_BAND_MISMATCH",
-
-    # Feature-structure conflict
     "FEAT_NEIGH_COS_BOTTOM10",
     "EMB_NEIGH_COS_BOTTOM10",
     "FEATURE_EMBED_DISAGREE_HIGH",
-
-    # Prototype relation
     "PROTO_FRAUD_CLOSE",
-    "PROTO_BENIGN_CLOSE",
-    "PROTO_CONFLICT_HIGH",
-
-    # Normal-structure deviation
     "NORMAL_STRUCTURE_DIST_HIGH",
     "NORMAL_PATTERN_DEVIATION_HIGH",
-
-    # Clean-view / interference
     "INTERFERING_EDGE_RATIO_HIGH",
     "CLEAN_VIEW_SHIFT_HIGH",
     "RAW_TO_CLEAN_CONFLICT",
-]
+})
 
-# Optional tokens (don't block microbenchmark)
-OPTIONAL_GRAPH_TOKENS = [
+TOKEN_POLARITY_BENIGN = frozenset({
+    "HF_RATIO_LOW",
+    "FEAT_NEIGH_COS_TOP20",
+    "EMB_NEIGH_COS_TOP20",
+    "BAND_ENERGY_STABLE",
+    "NORMAL_STRUCTURE_DIST_LOW",
+    "LOW_INTERFERENCE_EDGE_RATIO",
+    "CLEAN_VIEW_STABLE",
+    "NEIGHBOR_CONSISTENCY_HIGH",
+    "PROTO_BENIGN_CLOSE",
+    "FEATURE_EMBED_AGREE_HIGH",
+    "TWO_HOP_CONSISTENCY_HIGH",
+    "LOW_HIGH_BAND_MATCH",
+})
+
+TOKEN_POLARITY_NEUTRAL = frozenset({
+    "PROTO_CONFLICT_HIGH",
     "LOCAL_CURVATURE_OUTLIER_HIGH",
     "EDGE_CURVATURE_VAR_HIGH",
-]
+})
+
+TOKEN_POLARITY_MAP: dict[str, str] = {}
+for _tok in TOKEN_POLARITY_FRAUD:
+    TOKEN_POLARITY_MAP[_tok] = "fraud"
+for _tok in TOKEN_POLARITY_BENIGN:
+    TOKEN_POLARITY_MAP[_tok] = "benign"
+for _tok in TOKEN_POLARITY_NEUTRAL:
+    TOKEN_POLARITY_MAP[_tok] = "neutral"
+
+GRAPH_EVIDENCE_TOKENS = sorted(
+    TOKEN_POLARITY_FRAUD | TOKEN_POLARITY_BENIGN | TOKEN_POLARITY_NEUTRAL
+)
+
+OPTIONAL_GRAPH_TOKENS: list[str] = []
 
 REASON_TYPES = [
     "structural_discrepancy",

@@ -6,7 +6,6 @@ dataset:
   split_mode: supervised
   train_ratio: 0.4
   val_test_ratio: [1, 2]
-  split_seed: 42
   scarcity_ratio: 1.0
   stratified: true
 
@@ -25,7 +24,7 @@ train:
   lr: 0.01
   optimizer: adam
   weight_decay: 0.0005
-  patience: 50
+  patience: 100
   device: cuda:0
   select_metric: macro_f1
 
@@ -40,6 +39,11 @@ run:
   teacher: rule
   run_name: rule
   seed: 0
+
+stage2:
+  trace_sampler: error_aware
+  trace_size: 200
+  trace_size_debug: 32
 
 evidence:
   trace_size: 1000

@@ -34,13 +34,30 @@ def parse_llm_err(raw_output: str, node_id: int) -> ERR:
 
     summary = json_obj.get("summary", "")
 
-    return ERR(
+    evidence_direction = json_obj.get("evidence_direction", "uncertain")
+    evidence_strength = json_obj.get("evidence_strength", "weak")
+    uncertainty_raw = json_obj.get("uncertainty_factors", [])
+    uncertainty_factors = uncertainty_raw if isinstance(uncertainty_raw, list) else []
+
+    err_kwargs: dict = dict(
         node_id=node_id,
         risk_type=risk_type,
         supporting_evidence=supporting,
         counter_evidence=counter,
         summary=str(summary),
     )
+
+    import dataclasses
+    if dataclasses.is_dataclass(ERR) and hasattr(ERR, "evidence_direction"):
+        err_kwargs["evidence_direction"] = evidence_direction
+    if dataclasses.is_dataclass(ERR) and hasattr(ERR, "evidence_strength"):
+        err_kwargs["evidence_strength"] = evidence_strength
+    if dataclasses.is_dataclass(ERR) and hasattr(ERR, "uncertainty_factors"):
+        err_kwargs["uncertainty_factors"] = [
+            f for f in uncertainty_factors if isinstance(f, str)
+        ]
+
+    return ERR(**err_kwargs)
 
 
 def _remove_think_blocks(text: str) -> str:

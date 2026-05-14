@@ -10,8 +10,12 @@ def test_integrity_check_passes(tmp_path, monkeypatch):
     monkeypatch.chdir(Path(__file__).parent.parent)
 
     import subprocess
+    err_dir = Path("artifacts") / "err_cache" / "yelpchi" / "bwgnn" / "rule_safe" / "seed_123"
+    if not err_dir.exists():
+        pytest.skip("No rule_safe artifacts (fresh restart)")
+
     result = subprocess.run(
-        ["python", "scripts/check_run_integrity.py", "--config", "configs/yelpchi_bwgnn.yaml", "--run_name", "rule", "--seed", "123"],
+        ["python", "scripts/check_run_integrity.py", "--config", "configs/yelpchi_bwgnn.yaml", "--run_name", "rule_safe", "--seed", "123"],
         capture_output=True, text=True, timeout=60,
     )
     assert result.returncode == 0, f"Integrity check failed: {result.stderr}"
@@ -20,9 +24,13 @@ def test_integrity_check_passes(tmp_path, monkeypatch):
 def test_compare_stage1_stage3(tmp_path, monkeypatch):
     monkeypatch.chdir(Path(__file__).parent.parent)
 
+    err_dir = Path("artifacts") / "err_cache" / "yelpchi" / "bwgnn" / "rule_safe" / "seed_123"
+    if not err_dir.exists():
+        pytest.skip("No rule_safe artifacts (fresh restart)")
+
     import subprocess
     result = subprocess.run(
-        ["python", "scripts/compare_stage1_stage3.py", "--config", "configs/yelpchi_bwgnn.yaml", "--run_name", "rule", "--seed", "123"],
+        ["python", "scripts/compare_stage1_stage3.py", "--config", "configs/yelpchi_bwgnn.yaml", "--run_name", "rule_safe", "--seed", "123"],
         capture_output=True, text=True, timeout=60,
     )
     assert result.returncode == 0, f"Compare failed: {result.stderr}"

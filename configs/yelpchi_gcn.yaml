@@ -4,7 +4,6 @@ dataset:
   path: datasets/YelpChi.mat
   format: mat
   scarcity_ratio: 1.0
-  split_seed: 0
 
 model:
   name: gcn

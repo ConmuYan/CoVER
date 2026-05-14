@@ -33,7 +33,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from evidence.vocab import get_num_values, get_reason_types, get_evidence_slots
+from evidence.vocab import get_num_values, get_reason_types, get_evidence_slots, get_direction_num_classes
 
 VALID_GATE_MODES = ("signed_diff_legacy", "safe_residual", "direct_tanh", "aux_only")
 
@@ -118,6 +118,7 @@ class EvidenceReasoner(nn.Module):
         self.type_head = nn.Linear(hidden_dim, num_types)
         self.pos_head = nn.Linear(hidden_dim, num_slots)
         self.neg_head = nn.Linear(hidden_dim, num_slots)
+        self.direction_head = nn.Linear(hidden_dim, get_direction_num_classes())
 
         if gate_mode == "safe_residual":
             self.gate_head = nn.Linear(hidden_dim, 1)
@@ -157,6 +158,7 @@ class EvidenceReasoner(nn.Module):
         type_logits = self.type_head(h)
         pos_logits = self.pos_head(h)
         neg_logits = self.neg_head(h)
+        direction_logits = self.direction_head(h)
 
         base = base_logit.view(-1, 1)
 
@@ -193,6 +195,7 @@ class EvidenceReasoner(nn.Module):
             "type_logits": type_logits,
             "pos_logits": pos_logits,
             "neg_logits": neg_logits,
+            "direction_logits": direction_logits,
         }
 
         if return_debug:

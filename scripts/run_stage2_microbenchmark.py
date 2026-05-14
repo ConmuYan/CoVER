@@ -32,13 +32,14 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data.load_fraud import load_fraud_dataset
-from evidence.adapter import EvidenceAdapter, build_prototypes
+from evidence.adapter import EvidenceAdapter
 from evidence.llm_teacher import OfflineLLMTeacher
 from evidence.prompt import (
     build_contrastive_directional_messages,
     build_llm_messages,
     build_teacher_payload,
 )
+from evidence.prototypes import PrototypeBuilder
 from evidence.schema import ERR
 from evidence.trace_sampler import _bce_loss_per_node
 from evidence.verifier import EvidenceContractVerifier, load_contracts
@@ -130,12 +131,115 @@ def _node_category(node_id: int, drawn: dict[str, list[int]]) -> str:
     return "unknown"
 
 
+def analyze_payload_evidence(payload: dict) -> dict:
+    """Analyze a teacher payload for fraud/benign evidence availability."""
+    reasoning = payload.get("reasoning", {})
+    closer_to_fraud = reasoning.get("closer_to_fraud_prototype", "unknown")
+    closer_to_benign = reasoning.get("closer_to_benign_prototype", "unknown")
+    prototype_conflict = reasoning.get("prototype_conflict_level", "unknown")
+    fraud_matching = reasoning.get("fraud_prototype_matching_fields", [])
+    benign_matching = reasoning.get("benign_prototype_matching_fields", [])
+
+    fraud_like_tokens = []
+    benign_like_tokens = []
+
+    degree = reasoning.get("degree_level", "unknown")
+    if degree in ("high", "very_high"):
+        fraud_like_tokens.append("degree_level=high")
+    elif degree in ("low", "very_low"):
+        benign_like_tokens.append("degree_level=low")
+
+    neighbor = reasoning.get("neighbor_consistency", "unknown")
+    if neighbor in ("low", "very_low"):
+        fraud_like_tokens.append("neighbor_consistency=low")
+    elif neighbor in ("high", "very_high"):
+        benign_like_tokens.append("neighbor_consistency=high")
+
+    feat_disc = reasoning.get("feature_neighbor_discrepancy", "unknown")
+    if feat_disc in ("high", "very_high"):
+        fraud_like_tokens.append("feature_neighbor_discrepancy=high")
+    elif feat_disc in ("low", "very_low"):
+        benign_like_tokens.append("feature_neighbor_discrepancy=low")
+
+    detector = reasoning.get("detector_signal", "unknown")
+    if "high" in detector.lower():
+        fraud_like_tokens.append("detector_signal=high")
+    elif "low" in detector.lower() or "normal" in detector.lower():
+        benign_like_tokens.append("detector_signal=low/normal")
+
+    if fraud_matching:
+        fraud_like_tokens.extend([f"fraud_match={f}" for f in fraud_matching[:3]])
+    if benign_matching:
+        benign_like_tokens.extend([f"benign_match={f}" for f in benign_matching[:3]])
+
+    if closer_to_fraud == "high":
+        fraud_like_tokens.append("closer_to_fraud=high")
+    if closer_to_benign == "high":
+        benign_like_tokens.append("closer_to_benign=high")
+
+    n_fraud = len(fraud_like_tokens)
+    n_benign = len(benign_like_tokens)
+
+    if n_fraud > 0 and n_benign == 0:
+        payload_type = "fraud_dominant"
+    elif n_benign > 0 and n_fraud == 0:
+        payload_type = "benign_dominant"
+    elif n_fraud > 0 and n_benign > 0:
+        payload_type = "mixed"
+    else:
+        payload_type = "neutral"
+
+    return {
+        "has_fraud_signal": n_fraud > 0,
+        "has_benign_signal": n_benign > 0,
+        "has_prototype_conflict": prototype_conflict in ("medium", "high"),
+        "closer_to_fraud_high": closer_to_fraud == "high",
+        "closer_to_benign_high": closer_to_benign == "high",
+        "fraud_matching_nonempty": len(fraud_matching) > 0,
+        "benign_matching_nonempty": len(benign_matching) > 0,
+        "n_fraud_tokens": n_fraud,
+        "n_benign_tokens": n_benign,
+        "fraud_benign_balance": n_fraud - n_benign,
+        "payload_type": payload_type,
+        "fraud_like_tokens": fraud_like_tokens,
+        "benign_like_tokens": benign_like_tokens,
+    }
+
+
+def compute_payload_diagnostics(payloads: list[dict]) -> dict:
+    """Compute aggregate payload evidence diagnostics."""
+    analyses = [analyze_payload_evidence(p) for p in payloads]
+    n = len(analyses)
+    if n == 0:
+        return {}
+
+    benign_available = sum(1 for a in analyses if a["has_benign_signal"])
+    fraud_available = sum(1 for a in analyses if a["has_fraud_signal"])
+    conflict = sum(1 for a in analyses if a["has_prototype_conflict"])
+    benign_dominant = sum(1 for a in analyses if a["payload_type"] == "benign_dominant")
+    fraud_dominant = sum(1 for a in analyses if a["payload_type"] == "fraud_dominant")
+    mixed = sum(1 for a in analyses if a["payload_type"] == "mixed")
+    neutral = sum(1 for a in analyses if a["payload_type"] == "neutral")
+
+    return {
+        "benign_signal_available_rate": benign_available / n,
+        "fraud_signal_available_rate": fraud_available / n,
+        "prototype_conflict_rate": conflict / n,
+        "benign_dominant_payload_count": benign_dominant,
+        "fraud_dominant_payload_count": fraud_dominant,
+        "mixed_payload_count": mixed,
+        "neutral_payload_count": neutral,
+        "payload_types": [a["payload_type"] for a in analyses],
+    }
+
+
 def compute_metrics(
     errs: list[ERR | None],
     metadata_list: list[dict],
     cards: list,
     drawn: dict[str, list[int]],
     mode: str,
+    payload_types: list[str] | None = None,
 ) -> dict:
     """Compute the 10 metrics for one prompt mode."""
     n = len(errs)
@@ -205,6 +309,68 @@ def compute_metrics(
                     alignment_correct += 1
     direction_error_alignment = alignment_correct / alignment_total if alignment_total > 0 else 0.0
 
+    # Conditioned direction alignment (payload-aware)
+    conditioned_alignment_total = 0
+    conditioned_alignment_correct = 0
+    benign_direction_recall_total = 0
+    benign_direction_recall_correct = 0
+    fraud_direction_recall_total = 0
+    fraud_direction_recall_correct = 0
+    uncertain_on_mixed_total = 0
+    uncertain_on_mixed_correct = 0
+
+    if mode == "contrastive_directional" and payload_types:
+        for e, ptype in zip(valid_errs, payload_types[:len(valid_errs)]):
+            cat = _node_category(e.node_id, drawn)
+            direction = getattr(e, "evidence_direction", "uncertain")
+
+            # FN with fraud-dominant payload → expect increase_risk
+            if cat == "train_fn" and ptype == "fraud_dominant":
+                conditioned_alignment_total += 1
+                if direction == "increase_risk":
+                    conditioned_alignment_correct += 1
+
+            # FP with benign-dominant payload → expect decrease_risk
+            if cat == "train_fp" and ptype == "benign_dominant":
+                conditioned_alignment_total += 1
+                if direction == "decrease_risk":
+                    conditioned_alignment_correct += 1
+
+            # Benign-dominant payload → expect decrease_risk
+            if ptype == "benign_dominant":
+                benign_direction_recall_total += 1
+                if direction == "decrease_risk":
+                    benign_direction_recall_correct += 1
+
+            # Fraud-dominant payload → expect increase_risk
+            if ptype == "fraud_dominant":
+                fraud_direction_recall_total += 1
+                if direction == "increase_risk":
+                    fraud_direction_recall_correct += 1
+
+            # Mixed payload → expect uncertain
+            if ptype == "mixed":
+                uncertain_on_mixed_total += 1
+                if direction == "uncertain":
+                    uncertain_on_mixed_correct += 1
+
+    conditioned_direction_alignment = (
+        conditioned_alignment_correct / conditioned_alignment_total
+        if conditioned_alignment_total > 0 else 0.0
+    )
+    benign_direction_recall = (
+        benign_direction_recall_correct / benign_direction_recall_total
+        if benign_direction_recall_total > 0 else 0.0
+    )
+    fraud_direction_recall = (
+        fraud_direction_recall_correct / fraud_direction_recall_total
+        if fraud_direction_recall_total > 0 else 0.0
+    )
+    uncertain_on_mixed_rate = (
+        uncertain_on_mixed_correct / uncertain_on_mixed_total
+        if uncertain_on_mixed_total > 0 else 0.0
+    )
+
     return {
         "mode": mode,
         "n_total": n,
@@ -219,6 +385,14 @@ def compute_metrics(
         "structural_discrepancy_ratio": structural_discrepancy_ratio,
         "direction_error_alignment": direction_error_alignment,
         "direction_alignment_n": alignment_total,
+        "conditioned_direction_alignment": conditioned_direction_alignment,
+        "conditioned_alignment_n": conditioned_alignment_total,
+        "benign_direction_recall": benign_direction_recall,
+        "benign_direction_recall_n": benign_direction_recall_total,
+        "fraud_direction_recall": fraud_direction_recall,
+        "fraud_direction_recall_n": fraud_direction_recall_total,
+        "uncertain_on_mixed_rate": uncertain_on_mixed_rate,
+        "uncertain_on_mixed_n": uncertain_on_mixed_total,
     }
 
 
@@ -246,17 +420,34 @@ def run_mode(
     cards: list,
     verifier: EvidenceContractVerifier,
     llm_config: dict,
+    teacher_type: str = "mock",
 ) -> tuple[list[ERR | None], list[dict]]:
     """Run one prompt mode and return (errs, metadata_list)."""
-    teacher = OfflineLLMTeacher(
-        backend="mock",
-        temperature=0.0,
-        max_retries=1,
-        max_new_tokens=256,
-        enable_verifier_retry=True,
-        max_verifier_retries=1,
-        prompt_mode=mode,
-    )
+    if teacher_type == "qwen":
+        teacher = OfflineLLMTeacher(
+            backend="transformers_local",
+            model_name_or_path=llm_config.get("model_name_or_path"),
+            temperature=llm_config.get("temperature", 0.0),
+            max_retries=llm_config.get("max_parse_retries", 1),
+            max_new_tokens=llm_config.get("max_new_tokens", 256),
+            device_map=llm_config.get("device_map", "auto"),
+            torch_dtype=llm_config.get("torch_dtype", "auto"),
+            trust_remote_code=llm_config.get("trust_remote_code", True),
+            enable_verifier_retry=llm_config.get("enable_verifier_retry", True),
+            max_verifier_retries=llm_config.get("max_verifier_retries", 1),
+            max_parse_retries=llm_config.get("max_parse_retries", 1),
+            prompt_mode=mode,
+        )
+    else:
+        teacher = OfflineLLMTeacher(
+            backend="mock",
+            temperature=0.0,
+            max_retries=1,
+            max_new_tokens=256,
+            enable_verifier_retry=True,
+            max_verifier_retries=1,
+            prompt_mode=mode,
+        )
 
     errs: list[ERR | None] = []
     metadata_list: list[dict] = []
@@ -340,6 +531,8 @@ def write_markdown_report(
     model_name: str,
     seed: int,
     elapsed: float,
+    teacher_type: str = "mock",
+    payload_diag: dict | None = None,
 ) -> Path:
     """Write the markdown report."""
     report_path = output_dir / "artifacts" / "reports" / "stage2_directional_microbenchmark.md"
@@ -353,6 +546,7 @@ def write_markdown_report(
         f"**Dataset:** {dataset_name}  ",
         f"**Model:** {model_name}  ",
         f"**Seed:** {seed}  ",
+        f"**Teacher:** {teacher_type}  ",
         f"**Elapsed:** {elapsed:.2f}s  ",
         f"",
         f"## Sampling Summary",
@@ -360,6 +554,22 @@ def write_markdown_report(
     ]
     for cat, nodes in drawn.items():
         lines.append(f"- **{cat}**: {len(nodes)} nodes")
+
+    if payload_diag:
+        lines += [
+            f"",
+            f"## Payload Evidence Diagnostics",
+            f"",
+            f"| Metric | Value |",
+            f"|--------|-------|",
+            f"| Benign signal available rate | {payload_diag.get('benign_signal_available_rate', 0):.2%} |",
+            f"| Fraud signal available rate | {payload_diag.get('fraud_signal_available_rate', 0):.2%} |",
+            f"| Prototype conflict rate | {payload_diag.get('prototype_conflict_rate', 0):.2%} |",
+            f"| Benign dominant payloads | {payload_diag.get('benign_dominant_payload_count', 0)} |",
+            f"| Fraud dominant payloads | {payload_diag.get('fraud_dominant_payload_count', 0)} |",
+            f"| Mixed payloads | {payload_diag.get('mixed_payload_count', 0)} |",
+            f"| Neutral payloads | {payload_diag.get('neutral_payload_count', 0)} |",
+        ]
 
     lines += [
         f"",
@@ -373,6 +583,10 @@ def write_markdown_report(
         f"| Counter entropy | {current_metrics['counter_entropy']:.3f} | {directional_metrics['counter_entropy']:.3f} |",
         f"| Structural discrepancy ratio | {current_metrics['structural_discrepancy_ratio']:.2%} | {directional_metrics['structural_discrepancy_ratio']:.2%} |",
         f"| Direction error alignment | N/A | {directional_metrics['direction_error_alignment']:.2%} (n={directional_metrics['direction_alignment_n']}) |",
+        f"| Conditioned direction alignment | N/A | {directional_metrics['conditioned_direction_alignment']:.2%} (n={directional_metrics['conditioned_alignment_n']}) |",
+        f"| Benign direction recall | N/A | {directional_metrics['benign_direction_recall']:.2%} (n={directional_metrics['benign_direction_recall_n']}) |",
+        f"| Fraud direction recall | N/A | {directional_metrics['fraud_direction_recall']:.2%} (n={directional_metrics['fraud_direction_recall_n']}) |",
+        f"| Uncertain on mixed rate | N/A | {directional_metrics['uncertain_on_mixed_rate']:.2%} (n={directional_metrics['uncertain_on_mixed_n']}) |",
         f"",
         f"### Risk Type Distribution",
         f"",
@@ -500,6 +714,8 @@ def main():
     parser = argparse.ArgumentParser(description="Stage 2 microbenchmark: enhanced vs contrastive_directional")
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--seed", type=int, default=123)
+    parser.add_argument("--teacher", type=str, default="mock", choices=["mock", "qwen"],
+                        help="Teacher backend: mock (fast) or qwen (real LLM)")
     parser.add_argument("--debug", action="store_true", help="Use tiny synthetic graph for quick test")
     args = parser.parse_args()
 
@@ -581,33 +797,86 @@ def main():
         edge_index=data.edge_index,
     )
 
-    # Build prototypes for contrastive_directional mode
-    cards = adapter.extract_batch(
-        node_ids=nodes,
+    # Extract evidence tokens for ALL train nodes using vectorized method
+    train_node_ids = data.train_mask.nonzero(as_tuple=True)[0].tolist()
+    
+    # Check for cached tokens
+    cache_dir = Path("artifacts/token_cache")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / f"{dataset_name}_{model_name}_seed{seed}_train_tokens.json"
+    
+    if cache_file.exists():
+        print(f"Loading cached train tokens from {cache_file}...")
+        with open(cache_file) as f:
+            train_tokens_dict = json.load(f)
+        train_tokens_dict = {int(k): v for k, v in train_tokens_dict.items()}
+    else:
+        print(f"Extracting evidence tokens for {len(train_node_ids)} train nodes (vectorized)...")
+        start_tok = time.time()
+        
+        # Use fully vectorized method - no per-node loop
+        train_tokens_dict = adapter.generate_graph_evidence_tokens_vectorized(
+            node_ids=train_node_ids,
+            base_logits=base_logits,
+            embeddings=embeddings,
+            extras=extras if extras else None,
+            prototypes=None,
+        )
+        
+        elapsed_tok = time.time() - start_tok
+        print(f"Token extraction completed in {elapsed_tok:.1f}s ({len(train_node_ids)/elapsed_tok:.0f} nodes/s)")
+        
+        # Cache the tokens
+        with open(cache_file, "w") as f:
+            json.dump({str(k): v for k, v in train_tokens_dict.items()}, f)
+        print(f"Cached train tokens to {cache_file}")
+    
+    # Convert to format expected by PrototypeBuilder
+    evidence_tokens = {}
+    for node_id, token_list in train_tokens_dict.items():
+        # Convert token list to dict format (token_name -> "active")
+        evidence_tokens[node_id] = {t: "active" for t in token_list}
+    
+    # Build reasoning dict for prototypes (needed for field_modes)
+    train_cards = adapter.extract_batch(
+        node_ids=train_node_ids,
         base_logits=base_logits,
         embeddings=embeddings,
         extras=extras if extras else None,
     )
+    
+    base_preds = (torch.sigmoid(base_logits) >= 0.5).long()
+    
+    # Use new PrototypeBuilder with distinctive tokens
+    builder = PrototypeBuilder()
+    prototypes = builder.build(
+        train_mask=data.train_mask,
+        y=data.y,
+        evidence_tokens=evidence_tokens,
+        base_preds=base_preds,
+    )
 
-    # Build reasoning dict for prototypes
-    reasoning_dict = {card.node_id: card.reasoning for card in cards}
-    prototypes = build_prototypes(data.train_mask, data.y, reasoning_dict)
-
-    # Re-extract cards with prototypes
+    # Now extract cards for sampled nodes with prototypes
+    old_prototypes = {
+        "fraud_prototype": prototypes.get("fraud_prototype_summary", {}).get("field_modes", {}),
+        "benign_prototype": prototypes.get("benign_prototype_summary", {}).get("field_modes", {}),
+    }
     cards = adapter.extract_batch(
         node_ids=nodes,
         base_logits=base_logits,
         embeddings=embeddings,
         extras=extras if extras else None,
-        prototypes=prototypes,
+        prototypes=old_prototypes,
     )
 
     payloads = []
     for card in cards:
         payload = card.to_teacher_payload()
-        # Inject prototypes for contrastive_directional prompt
-        payload["fraud_prototype"] = prototypes.get("fraud_prototype", {})
-        payload["benign_prototype"] = prototypes.get("benign_prototype", {})
+        # Inject prototype field modes for contrastive_directional prompt
+        fraud_summary = prototypes.get("fraud_prototype_summary", {})
+        benign_summary = prototypes.get("benign_prototype_summary", {})
+        payload["fraud_prototype"] = fraud_summary.get("field_modes", {})
+        payload["benign_prototype"] = benign_summary.get("field_modes", {})
         payloads.append(payload)
 
     # ---- Load verifier ----
@@ -617,17 +886,22 @@ def main():
     start_time = time.time()
 
     # ---- Run both modes ----
-    print("Running enhanced mode...")
-    current_errs, current_meta = run_mode("enhanced", payloads, cards, verifier, llm_config)
+    teacher_type = args.teacher
+    print(f"Running enhanced mode (teacher={teacher_type})...")
+    current_errs, current_meta = run_mode("enhanced", payloads, cards, verifier, llm_config, teacher_type)
 
-    print("Running contrastive_directional mode...")
-    dir_errs, dir_meta = run_mode("contrastive_directional", payloads, cards, verifier, llm_config)
+    print(f"Running contrastive_directional mode (teacher={teacher_type})...")
+    dir_errs, dir_meta = run_mode("contrastive_directional", payloads, cards, verifier, llm_config, teacher_type)
 
     elapsed = time.time() - start_time
 
+    # ---- Compute payload diagnostics ----
+    payload_diag = compute_payload_diagnostics(payloads)
+    payload_types = payload_diag.get("payload_types", [])
+
     # ---- Compute metrics ----
     current_metrics = compute_metrics(current_errs, current_meta, cards, drawn, "enhanced")
-    dir_metrics = compute_metrics(dir_errs, dir_meta, cards, drawn, "contrastive_directional")
+    dir_metrics = compute_metrics(dir_errs, dir_meta, cards, drawn, "contrastive_directional", payload_types)
 
     pass_criteria = check_pass_criteria(dir_metrics)
 
@@ -641,7 +915,8 @@ def main():
     # ---- Write reports ----
     report_path = write_markdown_report(
         current_metrics, dir_metrics, pass_criteria, drawn,
-        output_dir, dataset_name, model_name, seed, elapsed,
+        output_dir, dataset_name, model_name, seed, elapsed, teacher_type,
+        payload_diag,
     )
     csv_path = tables_dir / "stage2_directional_microbenchmark.csv"
     write_csv(current_metrics, dir_metrics, csv_path)
@@ -662,9 +937,17 @@ def main():
     print(f"\n{'='*60}")
     print(f"Stage 2 Directional Microbenchmark Results")
     print(f"{'='*60}")
-    print(f"  Dataset: {dataset_name}, Model: {model_name}, Seed: {seed}")
+    print(f"  Dataset: {dataset_name}, Model: {model_name}, Seed: {seed}, Teacher: {teacher_type}")
     print(f"  Nodes: {len(nodes)}")
     print(f"  Elapsed: {elapsed:.2f}s")
+    print(f"")
+    print(f"  Payload Diagnostics:")
+    print(f"    Benign signal available: {payload_diag.get('benign_signal_available_rate', 0):.2%}")
+    print(f"    Fraud signal available: {payload_diag.get('fraud_signal_available_rate', 0):.2%}")
+    print(f"    Benign dominant: {payload_diag.get('benign_dominant_payload_count', 0)}")
+    print(f"    Fraud dominant: {payload_diag.get('fraud_dominant_payload_count', 0)}")
+    print(f"    Mixed: {payload_diag.get('mixed_payload_count', 0)}")
+    print(f"    Neutral: {payload_diag.get('neutral_payload_count', 0)}")
     print(f"")
     print(f"  Enhanced mode:")
     print(f"    Parse success: {current_metrics['parse_success_rate']:.2%}")
@@ -676,6 +959,10 @@ def main():
     print(f"    Verifier accept: {dir_metrics['verifier_acceptance_rate']:.2%}")
     print(f"    Struct discrepancy: {dir_metrics['structural_discrepancy_ratio']:.2%}")
     print(f"    Direction alignment: {dir_metrics['direction_error_alignment']:.2%} (n={dir_metrics['direction_alignment_n']})")
+    print(f"    Conditioned alignment: {dir_metrics['conditioned_direction_alignment']:.2%} (n={dir_metrics['conditioned_alignment_n']})")
+    print(f"    Benign direction recall: {dir_metrics['benign_direction_recall']:.2%} (n={dir_metrics['benign_direction_recall_n']})")
+    print(f"    Fraud direction recall: {dir_metrics['fraud_direction_recall']:.2%} (n={dir_metrics['fraud_direction_recall_n']})")
+    print(f"    Uncertain on mixed: {dir_metrics['uncertain_on_mixed_rate']:.2%} (n={dir_metrics['uncertain_on_mixed_n']})")
     print(f"")
     print(f"  Pass Criteria:")
     for name, ok in pass_criteria.items():

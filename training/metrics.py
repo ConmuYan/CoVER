@@ -12,6 +12,19 @@ from sklearn.metrics import (
 )
 
 
+def g_means(y_true: np.ndarray, y_pred_binary: np.ndarray) -> float:
+    """Compute G-Mean = sqrt(sensitivity * specificity)."""
+    tp = np.sum((y_true == 1) & (y_pred_binary == 1))
+    fn = np.sum((y_true == 1) & (y_pred_binary == 0))
+    fp = np.sum((y_true == 0) & (y_pred_binary == 1))
+    tn = np.sum((y_true == 0) & (y_pred_binary == 0))
+
+    sensitivity = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    specificity = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+
+    return float(np.sqrt(sensitivity * specificity))
+
+
 def compute_metrics(
     y_true: np.ndarray,
     y_pred_prob: np.ndarray,
@@ -34,6 +47,7 @@ def compute_metrics(
     metrics["macro_f1"] = f1_score(y_true, y_pred_binary, average="macro", zero_division=0)
     metrics["precision"] = precision_score(y_true, y_pred_binary, zero_division=0)
     metrics["recall"] = recall_score(y_true, y_pred_binary, zero_division=0)
+    metrics["g_means"] = g_means(y_true, y_pred_binary)
 
     for k in k_values:
         pk, rk = precision_recall_at_k(y_true, y_pred_prob, k)
@@ -71,6 +85,7 @@ def compute_metrics_with_threshold(
     metrics["macro_f1"] = f1_score(y_true, y_pred_binary, average="macro", zero_division=0)
     metrics["precision"] = precision_score(y_true, y_pred_binary, zero_division=0)
     metrics["recall"] = recall_score(y_true, y_pred_binary, zero_division=0)
+    metrics["g_means"] = g_means(y_true, y_pred_binary)
     metrics["threshold_used"] = float(threshold)
     metrics["positive_prediction_rate"] = float(y_pred_binary.mean()) if y_pred_binary.size > 0 else 0.0
 

@@ -1,7 +1,7 @@
 # CoVER-FD Project Memory
 
 > Last updated: 2026-05-13
-> Current phase: Task 8.4 complete, safe-residual controlled experiments done
+> Current phase: Stage 1 re-trained with new config (40:20:40 split, 100 epochs, macro_f1 selection)
 
 ---
 
@@ -40,6 +40,7 @@ Three-stage pipeline:
 | Task 8.2: Stratified Split Audit + Reasoner Diagnosis | ✅ | utils/threshold.py, scripts/audit_all_splits.py, scripts/diagnose_reasoner_outputs.py, scripts/run_reasoner_sweep.py |
 | Task 8.3: Safe Residual Gate Redesign | ✅ | models/reasoner.py, training/losses.py, scripts/train_stage3.py |
 | Task 8.4: Safe-Residual Controlled Re-run | ✅ | scripts/run_controlled_experiments.py, evidence/llm_teacher.py |
+| Task 8.5: Fair Same-Seed Audit | ✅ | scripts/audit_seed_alignment.py, scripts/aggregate_results.py, scripts/compare_methods.py |
 
 ---
 
@@ -628,14 +629,241 @@ scripts/aggregate_results.py            ✅ Used for result aggregation
 | YelpChi qwen_safe (3 seeds) | ✅ Complete |
 | Amazon base_strat (5 seeds) | ✅ Complete |
 | Amazon rule_safe (5 seeds) | ✅ Complete |
-| Amazon qwen_safe (3 seeds) | ✅ Complete |
+| Amazon qwen_safe (5 seeds) | ✅ Complete |
+
+---
+
+## Task 8.5: Fair Same-Seed Audit + Final Controlled Result Table
+
+### Summary
+
+Completed fair same-seed audit,补齐 Qwen seeds 42/2026 for both datasets, generated final controlled result tables with strict seed alignment.
+
+### Seed Alignment Status
+
+| Dataset | Method | Available Seeds |
+|---------|--------|-----------------|
+| YelpChi | base_strat | 42, 123, 456, 789, 2026 |
+| YelpChi | rule_safe | 42, 123, 456, 789, 2026 |
+| YelpChi | qwen_safe | 42, 123, 456, 789, 2026 |
+| Amazon | base_strat | 42, 123, 456, 789, 2026 |
+| Amazon | rule_safe | 42, 123, 456, 789, 2026 |
+| Amazon | qwen_safe | 42, 123, 456, 789, 2026 |
+
+**Common seeds (all methods):** 5/5 aligned
+
+### Fair Same-Seed Results (5 seeds, all methods aligned)
+
+| Dataset | Method | Δ ROC-AUC | Δ AUPRC | Δ F1@val | Δ Macro-F1@val |
+|---------|--------|-----------|---------|----------|---------------|
+| YelpChi | CoVER-Rule-Safe vs BWGNN | **+0.0047** | +0.0054 | -0.0004 | -0.0094 |
+| YelpChi | CoVER-Qwen-Safe vs BWGNN | **+0.0047** | +0.0055 | +0.0023 | -0.0118 |
+| Amazon | CoVER-Rule-Safe vs BWGNN | **+0.0043** | +0.0086 | +0.0009 | +0.0005 |
+| Amazon | CoVER-Qwen-Safe vs BWGNN | **+0.0042** | +0.0085 | -0.0006 | -0.0003 |
+
+### Key Findings
+
+1. **All 5 seeds aligned**: Qwen seeds 42, 2026 completed for both datasets
+2. **Fair delta**: Deltas computed on identical seed sets (no cross-seed bias)
+3. **Consistent improvement**: CoVER improves ROC-AUC by +0.004~0.005 on both datasets
+4. **Rule ≈ Qwen**: Rule-Safe and Qwen-Safe perform nearly identically
+5. **AuxOnly = Base**: rho=0.0 recovers base performance exactly
+6. **SafeResidual preserves base**: rho=0.1 maintains base ROC-AUC while enabling correction
+
+### New Files
+
+```
+scripts/audit_seed_alignment.py                    ✅ New - Seed alignment audit
+scripts/aggregate_results.py                       ✅ Updated - --fair_same_seed, 4 output files
+scripts/compare_methods.py                         ✅ Updated - --fair_same_seed, evidence/safety sections
+scripts/evaluate.py                                ✅ Updated - Both threshold modes for stage1
+artifacts/reports/seed_alignment_audit.json         ✅ New
+artifacts/reports/seed_alignment_audit.md           ✅ New
+artifacts/reports/final_controlled_conclusion.md    ✅ New
+artifacts/reports/llm_teacher_batch_audit.md        ✅ New
+artifacts/tables/final_controlled_metrics_full_available.csv  ✅ New
+artifacts/tables/final_controlled_metrics_full_available.md   ✅ New
+artifacts/tables/final_controlled_metrics_same_seed.csv       ✅ New
+artifacts/tables/final_controlled_metrics_same_seed.md        ✅ New
+artifacts/tables/final_evidence_quality_summary.csv           ✅ New
+artifacts/tables/final_evidence_quality_summary.md            ✅ New
+artifacts/tables/final_auxonly_comparison.md                  ✅ New
+```
+
+### Verification
+
+| Check | Status |
+|-------|--------|
+| pytest -q | ✅ 166 passed |
+| smoke tests (gcn/sage/gat/bwgnn) | ✅ All pass |
+| seed alignment audit | ✅ 5/5 seeds aligned |
+| aggregate --fair_same_seed | ✅ Correct deltas |
+| contracts.yaml unchanged | ✅ |
+| verifier.py unchanged | ✅ |
+| model architectures unchanged | ✅ |
+| Stage 3/evaluate LLM-free | ✅ |
+
+### Recommendations for Paper
+
+1. **Report CoVER-Qwen-Safe as main method** (LLM-based, generalizable)
+2. **Report CoVER-Rule-Safe as fallback** (no LLM needed)
+3. **Use 5-seed fair same-seed comparison** for all deltas
+4. **Next steps**: Ablation studies (no_verifier, no_counter), scarcity experiments
+
+---
+
+## Stage 1 Re-training (Latest Config)
+
+### Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| train_ratio | 0.4 (40% train) |
+| val_test_ratio | [1, 2] (20% val, 40% test) |
+| split_mode | supervised |
+| stratified | true |
+| epochs | 100 |
+| lr | 0.01 |
+| hidden_dim | 64 |
+| select_metric | macro_f1 |
+| patience | 100 (no early stopping) |
+| seeds | 42, 123, 456, 789, 2026 |
+
+### Results (5 seeds)
+
+| Dataset | Seed | ROC-AUC | AUPRC | Macro-F1 | G-Means |
+|---------|------|---------|-------|----------|---------|
+| Amazon | 42 | 0.9717 | 0.8688 | 0.9152 | 0.8766 |
+| Amazon | 123 | 0.9820 | 0.8600 | 0.9167 | 0.8815 |
+| Amazon | 456 | 0.9753 | 0.8591 | 0.9134 | 0.8748 |
+| Amazon | 789 | 0.9151 | 0.8121 | 0.9124 | 0.8778 |
+| Amazon | 2026 | 0.9485 | 0.8560 | 0.9273 | 0.8986 |
+| **Amazon** | **mean±std** | **0.9585±0.0261** | **0.8512±0.0214** | **0.9170±0.0058** | **0.8819±0.0089** |
+| YelpChi | 42 | 0.7760 | 0.4139 | 0.6250 | 0.4712 |
+| YelpChi | 123 | 0.8115 | 0.4780 | 0.6656 | 0.5471 |
+| YelpChi | 456 | 0.8068 | 0.4659 | 0.6518 | 0.5178 |
+| YelpChi | 789 | 0.8061 | 0.4600 | 0.6396 | 0.4991 |
+| YelpChi | 2026 | 0.8066 | 0.4707 | 0.6076 | 0.4216 |
+| **YelpChi** | **mean±std** | **0.8014±0.0137** | **0.4577±0.0236** | **0.6379±0.0213** | **0.4914±0.0441** |
+
+### Stage 1 → Stage 2 Data Flow
+
+Stage 2 requires: `base_logits`, `embeddings`, `extras`
+
+| Output | Source | Status |
+|--------|--------|--------|
+| `base_logits` | `model(x, edge_index).logits` | ✅ From checkpoint re-inference |
+| `embeddings` | `model(x, edge_index).embeddings` | ✅ From checkpoint re-inference |
+| `extras` | `model(x, edge_index).extras` | ✅ BWGNN provides `high_freq_response` |
+
+Stage 1 only saves checkpoint (`base.pt`). Stage 2 loads checkpoint and re-runs inference to get logits/embeddings/extras. This avoids saving large tensors.
+
+### Checkpoints
+
+```
+artifacts/checkpoints/{yelpchi,amazon}/bwgnn/base/seed_{42,123,456,789,2026}/base.pt
+```
 
 ---
 
 ## Validation Commands
 
 ```bash
-# Current (Task 1-8.4)
+# Current (Task 1-8.5 + Stage 1 re-training)
 pytest -q
-python scripts/aggregate_results.py --datasets yelpchi amazon --model bwgnn --teachers base_strat rule_safe qwen_safe --seeds 123 456 789 42 2026 --allow_missing
+
+# Stage 2 (rule teacher)
+python scripts/generate_stage2_err.py --config configs/yelpchi_bwgnn.yaml --teacher rule --seed 42 --stratified
+
+# Stage 3
+python scripts/train_stage3.py --config configs/yelpchi_bwgnn.yaml --seed 42 --stratified
+
+# Evaluate
+python scripts/evaluate.py --config configs/yelpchi_bwgnn.yaml --stage stage3 --seed 42 --stratified
 ```
+
+---
+
+## Task 8.6: Error-Aware Stage2 + CV-SCD Stage3 from Fresh BWGNN Baseline
+
+### Summary
+
+Clean restart with fresh Stage1 BWGNN checkpoints. Implemented error-aware trace selection, enhanced score-blind EvidenceCard, CV-SCD four-term loss. Ran Qwen Stage2 + Stage3 on YelpChi 3 seeds.
+
+**Result: CoVER does NOT improve over base BWGNN on YelpChi.** Qwen 4B generates 96% structural_discrepancy ERRs, providing no discriminative signal.
+
+### New/Updated Files
+
+```
+scripts/audit_fresh_stage1.py              ✅ New - Fresh Stage1 baseline audit
+evidence/trace_sampler.py                  ✅ New - Error-aware 6-pool trace sampler
+evidence/schema.py                         ✅ Updated - 11 new EvidenceCard fields
+evidence/adapter.py                        ✅ Rewritten - GPU-vectorized batch extraction
+evidence/vocab.py                          ✅ Updated - 11 new evidence slots
+evidence/llm_teacher.py                    ✅ Updated - Disabled torch.compile
+training/losses.py                         ✅ Updated - CV-SCD 4-term loss (L_det + L_err + L_signed + L_corr)
+scripts/generate_stage2_err.py             ✅ Updated - Error-aware sampler, GPU, tqdm, batch_size=32
+scripts/train_stage3.py                    ✅ Updated - CV-SCD loss, all params
+tests/test_score_blind_enhanced_card.py    ✅ New - 11 tests
+tests/test_cvscd_loss.py                   ✅ New - 16 tests
+```
+
+### Fresh Stage1 Baseline (5 seeds)
+
+| Dataset | ROC-AUC | AUPRC | F1@0.5 | Macro-F1@0.5 | MF1@val |
+|---------|---------|-------|--------|-------------|---------|
+| YelpChi | 0.8014±0.0137 | 0.4577±0.0236 | 0.3504±0.0411 | 0.6379±0.0202 | 0.6748±0.0095 |
+| Amazon | 0.9585±0.0261 | 0.8512±0.0214 | 0.8448±0.0127 | 0.9170±0.0058 | 0.9153±0.0074 |
+
+### Qwen Stage2 Error-Aware (YelpChi, 3 seeds)
+
+| Seed | Accepted | Rate | Elapsed | Speed |
+|------|----------|------|---------|-------|
+| 123 | 200/200 | 100% | 468s | 0.4 n/s |
+| 456 | 198/200 | 99.0% | 119s | 1.7 n/s |
+| 789 | 199/200 | 99.5% | 204s | 1.0 n/s |
+
+### Same-Seed Comparison (3 seeds, val_macro_f1 calibrated)
+
+| Seed | BWGNN ROC | CoVER ROC | Δ ROC | BWGNN MF1@val | CoVER MF1@val | Δ MF1 |
+|------|-----------|-----------|-------|---------------|---------------|-------|
+| 123 | 0.8115 | 0.8115 | +0.0000 | 0.6814 | 0.6816 | +0.0002 |
+| 456 | 0.8068 | 0.8069 | +0.0001 | 0.6792 | 0.6794 | +0.0002 |
+| 789 | 0.8061 | 0.8060 | -0.0001 | 0.6747 | 0.6746 | -0.0001 |
+| **Mean** | **0.8081** | **0.8081** | **+0.0000** | **0.6784** | **0.6785** | **+0.0001** |
+
+### Root Cause Diagnosis
+
+1. **Qwen degenerates to Rule-like**: 95-96.5% ERRs are `structural_discrepancy` (same as rule teacher)
+2. **Low evidence entropy**: Bucket fields carry minimal discriminative information
+3. **Residual shift ≈ 0**: safe_residual gate with rho=0.1 is too conservative
+4. **L_signed/L_corr not effective**: Uniform evidence pattern provides no meaningful contrast
+
+### GPU Optimization
+
+- Vectorized EvidenceAdapter: batch pre-compute all global stats once → 4x speedup
+- Disabled torch.compile in LLM teacher: eliminates first-run compilation latency
+- batch_size=32: 4x faster than batch_size=4 (119s vs 468s)
+- BWGNN model moved to GPU for Stage2 inference
+
+### Verification
+
+| Check | Status |
+|-------|--------|
+| pytest -q | ✅ 191+ passed |
+| score-blind checks | ✅ All pass |
+| no test labels in trace | ✅ test_labels_used=false |
+| no score in teacher payload | ✅ score_visible_to_teacher=false |
+| base_logits detached in CV-SCD | ✅ Verified by tests |
+| no LLM import in train_stage3/evaluate | ✅ Verified by tests |
+
+### Decision: Do NOT extend to 5 seeds
+
+Per Step 6 rules, 3-seed results do not meet improvement criteria (Δ ROC-AUC < +0.008, Δ AUPRC < +0.010).
+
+### Recommendations
+
+1. Use larger LLM for diverse evidence generation
+2. Try rho=0.3-0.5 with stronger regularization
+3. Test on Amazon dataset (higher base performance)
+4. Consider continuous-valued evidence fields

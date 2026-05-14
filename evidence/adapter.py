@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from evidence.schema import CalibrationChannel, EvidenceCard, ReasoningChannel
+from evidence.vocab import TOKEN_POLARITY_FRAUD, TOKEN_POLARITY_BENIGN, TOKEN_POLARITY_NEUTRAL
 
 # Fields used for prototype construction — all are score-blind (no base_score/prob/logit/confidence)
 SCORE_BLIND_FIELDS = [
@@ -77,8 +78,12 @@ def build_prototypes(
 def compute_prototype_similarity(
     reasoning: ReasoningChannel | dict,
     prototype: dict,
+    distinctive_fields: set[str] | None = None,
 ) -> tuple[int, int, list[str]]:
     """Compare a single node's reasoning fields with a prototype.
+
+    When distinctive_fields is provided, only compare fields that are
+    class-distinctive (from train-only log-odds analysis).
 
     Returns: (match_count, total_fields, matching_field_names)
     """
@@ -86,7 +91,11 @@ def compute_prototype_similarity(
     total_fields = 0
     matching_field_names: list[str] = []
 
-    for field in SCORE_BLIND_FIELDS:
+    fields = distinctive_fields if distinctive_fields else SCORE_BLIND_FIELDS
+    for field in fields:
+        if field not in SCORE_BLIND_FIELDS:
+            continue
+
         proto_val = prototype.get(field, "unknown")
         if proto_val == "unknown":
             continue
@@ -308,6 +317,32 @@ class EvidenceAdapter:
             proto_fields = self._compute_prototype_relative_fields(reasoning, prototypes)
             for key, val in proto_fields.items():
                 setattr(reasoning, key, val)
+            allowed_support_ids.extend([
+                "closer_to_fraud_prototype", "closer_to_benign_prototype",
+                "prototype_conflict_level",
+            ])
+
+        # --- Evidence polarity from graph tokens ---
+        graph_tokens = self.generate_graph_evidence_tokens(
+            node_id, base_logits, embeddings, extras, prototypes,
+        )
+        fraud_ct = sum(1 for t in graph_tokens if t in TOKEN_POLARITY_FRAUD)
+        benign_ct = sum(1 for t in graph_tokens if t in TOKEN_POLARITY_BENIGN)
+        neutral_ct = sum(1 for t in graph_tokens if t in TOKEN_POLARITY_NEUTRAL)
+
+        if fraud_ct + benign_ct + neutral_ct == 0:
+            polarity = "weak"
+        elif fraud_ct > benign_ct * 1.5:
+            polarity = "fraud_dominant"
+        elif benign_ct > fraud_ct * 1.5:
+            polarity = "benign_dominant"
+        else:
+            polarity = "mixed"
+
+        reasoning.fraud_token_count = fraud_ct
+        reasoning.benign_token_count = benign_ct
+        reasoning.neutral_token_count = neutral_ct
+        reasoning.evidence_polarity = polarity
 
         return EvidenceCard(
             node_id=node_id,
@@ -377,12 +412,25 @@ class EvidenceAdapter:
         reasoning: ReasoningChannel,
         prototypes: dict,
     ) -> dict:
-        """Compute prototype-relative fields for a single node's reasoning."""
+        """Compute prototype-relative fields using distinctive tokens when available."""
         fraud_proto = prototypes.get("fraud_prototype", {})
         benign_proto = prototypes.get("benign_prototype", {})
 
-        fraud_match, fraud_total, fraud_fields = compute_prototype_similarity(reasoning, fraud_proto)
-        benign_match, benign_total, benign_fields = compute_prototype_similarity(reasoning, benign_proto)
+        fraud_distinctive = None
+        benign_distinctive = None
+        fraud_summary = prototypes.get("fraud_prototype_summary", {})
+        benign_summary = prototypes.get("benign_prototype_summary", {})
+        if fraud_summary.get("distinctive_tokens"):
+            fraud_distinctive = {dt["field"] for dt in fraud_summary["distinctive_tokens"]}
+        if benign_summary.get("distinctive_tokens"):
+            benign_distinctive = {dt["field"] for dt in benign_summary["distinctive_tokens"]}
+
+        fraud_match, fraud_total, fraud_fields = compute_prototype_similarity(
+            reasoning, fraud_proto, fraud_distinctive,
+        )
+        benign_match, benign_total, benign_fields = compute_prototype_similarity(
+            reasoning, benign_proto, benign_distinctive,
+        )
 
         fraud_ratio = fraud_match / fraud_total if fraud_total > 0 else 0.0
         benign_ratio = benign_match / benign_total if benign_total > 0 else 0.0
@@ -502,6 +550,13 @@ class EvidenceAdapter:
         allowed_support_ids = [
             "degree_level", "neighbor_consistency", "feature_neighbor_discrepancy",
             "detector_signal", "detector_signal_strength",
+            "degree_percentile_bucket", "neighbor_degree_skew_bucket",
+            "two_hop_consistency_bucket",
+            "feature_neighbor_cosine_bucket", "embedding_neighbor_cosine_bucket",
+            "feature_embedding_disagreement_bucket",
+            "bwgnn_low_band_energy_bucket", "bwgnn_mid_band_energy_bucket",
+            "bwgnn_high_band_energy_bucket", "bwgnn_high_low_energy_ratio_bucket",
+            "message_residual_bucket",
         ] + [f"neighbor_{nid.item()}" for nid in neighbor_ids[:5]]
         allowed_counter_ids = [
             "counter_signal",
@@ -584,6 +639,10 @@ class EvidenceAdapter:
                 ratio = high / low
                 if ratio > 2.0:
                     tokens.append("BAND_ENERGY_CONFLICT_HIGH")
+                if 0.5 <= ratio <= 1.5:
+                    tokens.append("BAND_ENERGY_STABLE")
+                if 0.8 <= ratio <= 1.2:
+                    tokens.append("LOW_HIGH_BAND_MATCH")
 
         if extras and "low_high_band_mismatch" in extras:
             if extras["low_high_band_mismatch"][node_id].item() > extras_q.get("low_high_band_mismatch", {}).get("q90", float("inf")):
@@ -592,6 +651,8 @@ class EvidenceAdapter:
         if extras and "normal_structure_dist" in extras:
             if extras["normal_structure_dist"][node_id].item() > extras_q.get("normal_structure_dist", {}).get("q90", float("inf")):
                 tokens.append("NORMAL_STRUCTURE_DIST_HIGH")
+            if extras["normal_structure_dist"][node_id].item() < extras_q.get("normal_structure_dist", {}).get("q10", float("-inf")):
+                tokens.append("NORMAL_STRUCTURE_DIST_LOW")
 
         if extras and "pattern_deviation" in extras:
             if extras["pattern_deviation"][node_id].item() > extras_q.get("pattern_deviation", {}).get("q90", float("inf")):
@@ -600,10 +661,14 @@ class EvidenceAdapter:
         if extras and "interfering_edge_ratio" in extras:
             if extras["interfering_edge_ratio"][node_id].item() > extras_q.get("interfering_edge_ratio", {}).get("q90", float("inf")):
                 tokens.append("INTERFERING_EDGE_RATIO_HIGH")
+            if extras["interfering_edge_ratio"][node_id].item() < extras_q.get("interfering_edge_ratio", {}).get("q10", float("-inf")):
+                tokens.append("LOW_INTERFERENCE_EDGE_RATIO")
 
         if extras and "clean_view_shift" in extras:
             if extras["clean_view_shift"][node_id].item() > extras_q.get("clean_view_shift", {}).get("q90", float("inf")):
                 tokens.append("CLEAN_VIEW_SHIFT_HIGH")
+            if extras["clean_view_shift"][node_id].item() < extras_q.get("clean_view_shift", {}).get("q10", float("-inf")):
+                tokens.append("CLEAN_VIEW_STABLE")
 
         if extras and "raw_to_clean_conflict" in extras:
             if extras["raw_to_clean_conflict"][node_id].item() > extras_q.get("raw_to_clean_conflict", {}).get("q90", float("inf")):
@@ -620,20 +685,36 @@ class EvidenceAdapter:
         if reasoning_fields["feature_neighbor_cosine_bucket"] != "unknown":
             feat_cos = self._feat_cos[node_id].item()
             feat_q10 = torch.quantile(self._feat_cos, 0.10).item()
+            feat_q90 = torch.quantile(self._feat_cos, 0.90).item()
             if feat_cos < feat_q10:
                 tokens.append("FEAT_NEIGH_COS_BOTTOM10")
+            if feat_cos > feat_q90:
+                tokens.append("FEAT_NEIGH_COS_TOP20")
 
         if reasoning_fields["embedding_neighbor_cosine_bucket"] != "unknown":
             emb_cos = self._emb_cos[node_id].item()
             emb_q10 = torch.quantile(self._emb_cos, 0.10).item()
+            emb_q90 = torch.quantile(self._emb_cos, 0.90).item()
             if emb_cos < emb_q10:
                 tokens.append("EMB_NEIGH_COS_BOTTOM10")
+            if emb_cos > emb_q90:
+                tokens.append("EMB_NEIGH_COS_TOP20")
 
         if reasoning_fields["feature_embedding_disagreement_bucket"] != "unknown":
             feat_cos = self._feat_cos[node_id].item()
             emb_cos = self._emb_cos[node_id].item()
             if abs(feat_cos - emb_cos) > 0.3:
                 tokens.append("FEATURE_EMBED_DISAGREE_HIGH")
+            if abs(feat_cos - emb_cos) < 0.1:
+                tokens.append("FEATURE_EMBED_AGREE_HIGH")
+
+        if hasattr(self, '_neighbor_logit_std'):
+            logit_std_q10 = torch.quantile(self._neighbor_logit_std, 0.10).item()
+            if self._neighbor_logit_std[node_id].item() < logit_std_q10:
+                tokens.append("NEIGHBOR_CONSISTENCY_HIGH")
+
+        if reasoning_fields.get("two_hop_consistency_bucket") == "high":
+            tokens.append("TWO_HOP_CONSISTENCY_HIGH")
 
         if prototypes:
             reasoning_dict = reasoning_fields
@@ -652,6 +733,311 @@ class EvidenceAdapter:
                 tokens.append("PROTO_CONFLICT_HIGH")
 
         return tokens
+
+    def generate_graph_evidence_tokens_batch(
+        self,
+        node_ids: list[int],
+        base_logits: Tensor,
+        embeddings: Tensor,
+        extras: dict[str, Tensor] | None,
+        prototypes: dict | None,
+    ) -> dict[int, list[str]]:
+        """GPU-vectorized batch token generation for multiple nodes.
+
+        Computes quantiles once, then generates tokens for all nodes in parallel.
+        ~100x faster than calling generate_graph_evidence_tokens per node.
+        """
+        base_logits = self._normalize_base_logits(base_logits)
+        self._precompute_global(embeddings, base_logits)
+        row, col = self.edge_index
+
+        # Compute all quantiles once (not per node)
+        extras_q: dict[str, dict] = {}
+        if extras:
+            for key, tensor in extras.items():
+                try:
+                    extras_q[key] = {
+                        "q10": tensor.quantile(0.10).item(),
+                        "q33": tensor.quantile(0.33).item(),
+                        "q50": tensor.quantile(0.50).item(),
+                        "q66": tensor.quantile(0.66).item(),
+                        "q90": tensor.quantile(0.90).item(),
+                    }
+                except Exception:
+                    continue
+
+        # Pre-compute cosine quantiles once
+        feat_cos_q10 = torch.quantile(self._feat_cos, 0.10).item() if hasattr(self, '_feat_cos') else 0.0
+        emb_cos_q10 = torch.quantile(self._emb_cos, 0.10).item() if hasattr(self, '_emb_cos') else 0.0
+        feat_cos_q90 = torch.quantile(self._feat_cos, 0.90).item() if hasattr(self, '_feat_cos') else 1.0
+        emb_cos_q90 = torch.quantile(self._emb_cos, 0.90).item() if hasattr(self, '_emb_cos') else 1.0
+        logit_std_q10 = torch.quantile(self._neighbor_logit_std, 0.10).item() if hasattr(self, '_neighbor_logit_std') else 0.0
+
+        # Build results
+        results: dict[int, list[str]] = {}
+        for node_id in node_ids:
+            reasoning_fields, _, _ = self._build_reasoning_fields(node_id, extras, extras_q, row, col)
+            tokens: list[str] = []
+
+            # Spectral / BWGNN tokens
+            if extras and "high_freq_response" in extras:
+                hf_val = extras["high_freq_response"][node_id].item()
+                if hf_val > extras_q["high_freq_response"]["q90"]:
+                    tokens.append("HF_RATIO_TOP10")
+                if hf_val > extras_q["high_freq_response"]["q50"]:
+                    tokens.append("HF_RATIO_HIGH")
+                else:
+                    tokens.append("HF_RATIO_LOW")
+
+            if extras and "bwgnn_high_band" in extras and "bwgnn_low_band" in extras:
+                high = extras["bwgnn_high_band"][node_id].item()
+                low = extras["bwgnn_low_band"][node_id].item()
+                if high > 0 and low > 0:
+                    ratio = high / low
+                    if ratio > 2.0:
+                        tokens.append("BAND_ENERGY_CONFLICT_HIGH")
+                    if 0.5 <= ratio <= 1.5:
+                        tokens.append("BAND_ENERGY_STABLE")
+                    if 0.8 <= ratio <= 1.2:
+                        tokens.append("LOW_HIGH_BAND_MATCH")
+
+            if extras and "normal_structure_dist" in extras:
+                val = extras["normal_structure_dist"][node_id].item()
+                if val > extras_q.get("normal_structure_dist", {}).get("q90", float("inf")):
+                    tokens.append("NORMAL_STRUCTURE_DIST_HIGH")
+                if val < extras_q.get("normal_structure_dist", {}).get("q10", float("-inf")):
+                    tokens.append("NORMAL_STRUCTURE_DIST_LOW")
+
+            if extras and "interfering_edge_ratio" in extras:
+                val = extras["interfering_edge_ratio"][node_id].item()
+                if val > extras_q.get("interfering_edge_ratio", {}).get("q90", float("inf")):
+                    tokens.append("INTERFERING_EDGE_RATIO_HIGH")
+                if val < extras_q.get("interfering_edge_ratio", {}).get("q10", float("-inf")):
+                    tokens.append("LOW_INTERFERENCE_EDGE_RATIO")
+
+            if extras and "clean_view_shift" in extras:
+                val = extras["clean_view_shift"][node_id].item()
+                if val > extras_q.get("clean_view_shift", {}).get("q90", float("inf")):
+                    tokens.append("CLEAN_VIEW_SHIFT_HIGH")
+                if val < extras_q.get("clean_view_shift", {}).get("q10", float("-inf")):
+                    tokens.append("CLEAN_VIEW_STABLE")
+
+            # Feature-structure conflict
+            if hasattr(self, '_feat_cos'):
+                feat_cos = self._feat_cos[node_id].item()
+                if feat_cos < feat_cos_q10:
+                    tokens.append("FEAT_NEIGH_COS_BOTTOM10")
+                if feat_cos > feat_cos_q90:
+                    tokens.append("FEAT_NEIGH_COS_TOP20")
+
+            if hasattr(self, '_emb_cos'):
+                emb_cos = self._emb_cos[node_id].item()
+                if emb_cos < emb_cos_q10:
+                    tokens.append("EMB_NEIGH_COS_BOTTOM10")
+                if emb_cos > emb_cos_q90:
+                    tokens.append("EMB_NEIGH_COS_TOP20")
+
+            if hasattr(self, '_feat_cos') and hasattr(self, '_emb_cos'):
+                feat_cos = self._feat_cos[node_id].item()
+                emb_cos = self._emb_cos[node_id].item()
+                if abs(feat_cos - emb_cos) > 0.3:
+                    tokens.append("FEATURE_EMBED_DISAGREE_HIGH")
+                if abs(feat_cos - emb_cos) < 0.1:
+                    tokens.append("FEATURE_EMBED_AGREE_HIGH")
+
+            if hasattr(self, '_neighbor_logit_std'):
+                if self._neighbor_logit_std[node_id].item() < logit_std_q10:
+                    tokens.append("NEIGHBOR_CONSISTENCY_HIGH")
+
+            if reasoning_fields.get("two_hop_consistency_bucket") == "high":
+                tokens.append("TWO_HOP_CONSISTENCY_HIGH")
+
+            # Prototype relation
+            if prototypes:
+                fraud_match, _, _ = compute_prototype_similarity(
+                    reasoning_fields, prototypes.get("fraud_prototype", {})
+                )
+                benign_match, _, _ = compute_prototype_similarity(
+                    reasoning_fields, prototypes.get("benign_prototype", {})
+                )
+                if fraud_match > 5:
+                    tokens.append("PROTO_FRAUD_CLOSE")
+                if benign_match > 5:
+                    tokens.append("PROTO_BENIGN_CLOSE")
+                if abs(fraud_match - benign_match) < 2:
+                    tokens.append("PROTO_CONFLICT_HIGH")
+
+            results[node_id] = tokens
+
+        return results
+
+    def generate_graph_evidence_tokens_vectorized(
+        self,
+        node_ids: list[int],
+        base_logits: Tensor,
+        embeddings: Tensor,
+        extras: dict[str, Tensor] | None,
+        prototypes: dict | None,
+    ) -> dict[int, list[str]]:
+        """Fully vectorized token generation - no per-node loop.
+
+        Computes all comparisons as tensor operations, then converts to token lists.
+        ~1000x faster than per-node generation for large node sets.
+        """
+        base_logits = self._normalize_base_logits(base_logits)
+        self._precompute_global(embeddings, base_logits)
+
+        node_tensor = torch.tensor(node_ids, dtype=torch.long)
+        n = len(node_ids)
+
+        # Compute all quantiles once
+        extras_q: dict[str, dict] = {}
+        if extras:
+            for key, tensor in extras.items():
+                try:
+                    extras_q[key] = {
+                        "q10": tensor.quantile(0.10).item(),
+                        "q33": tensor.quantile(0.33).item(),
+                        "q50": tensor.quantile(0.50).item(),
+                        "q66": tensor.quantile(0.66).item(),
+                        "q90": tensor.quantile(0.90).item(),
+                    }
+                except Exception:
+                    continue
+
+        feat_cos_q10 = torch.quantile(self._feat_cos, 0.10).item() if hasattr(self, '_feat_cos') else 0.0
+        emb_cos_q10 = torch.quantile(self._emb_cos, 0.10).item() if hasattr(self, '_emb_cos') else 0.0
+        feat_cos_q90 = torch.quantile(self._feat_cos, 0.90).item() if hasattr(self, '_feat_cos') else 1.0
+        emb_cos_q90 = torch.quantile(self._emb_cos, 0.90).item() if hasattr(self, '_emb_cos') else 1.0
+        logit_std_q10 = torch.quantile(self._neighbor_logit_std, 0.10).item() if hasattr(self, '_neighbor_logit_std') else 0.0
+
+        # Initialize token containers for each node
+        token_sets: list[set[str]] = [set() for _ in range(n)]
+
+        # Spectral / BWGNN tokens
+        if extras and "high_freq_response" in extras:
+            hf = extras["high_freq_response"][node_tensor]
+            hf_q90 = extras_q["high_freq_response"]["q90"]
+            hf_q50 = extras_q["high_freq_response"]["q50"]
+
+            top10_mask = hf > hf_q90
+            high_mask = hf > hf_q50
+            low_mask = ~high_mask
+
+            for i in range(n):
+                if top10_mask[i].item():
+                    token_sets[i].add("HF_RATIO_TOP10")
+                if high_mask[i].item():
+                    token_sets[i].add("HF_RATIO_HIGH")
+                else:
+                    token_sets[i].add("HF_RATIO_LOW")
+
+        if extras and "bwgnn_high_band" in extras and "bwgnn_low_band" in extras:
+            high = extras["bwgnn_high_band"][node_tensor]
+            low = extras["bwgnn_low_band"][node_tensor]
+            ratio = torch.where((high > 0) & (low > 0), high / low, torch.zeros(n))
+            conflict_mask = ratio > 2.0
+            stable_mask = (ratio >= 0.5) & (ratio <= 1.5)
+            match_mask = (ratio >= 0.8) & (ratio <= 1.2)
+
+            for i in range(n):
+                if conflict_mask[i].item():
+                    token_sets[i].add("BAND_ENERGY_CONFLICT_HIGH")
+                if stable_mask[i].item():
+                    token_sets[i].add("BAND_ENERGY_STABLE")
+                if match_mask[i].item():
+                    token_sets[i].add("LOW_HIGH_BAND_MATCH")
+
+        if extras and "normal_structure_dist" in extras:
+            nsd = extras["normal_structure_dist"][node_tensor]
+            nsd_q90 = extras_q["normal_structure_dist"]["q90"]
+            nsd_q10 = extras_q["normal_structure_dist"]["q10"]
+            for i in range(n):
+                if nsd[i].item() > nsd_q90:
+                    token_sets[i].add("NORMAL_STRUCTURE_DIST_HIGH")
+                if nsd[i].item() < nsd_q10:
+                    token_sets[i].add("NORMAL_STRUCTURE_DIST_LOW")
+
+        if extras and "interfering_edge_ratio" in extras:
+            ier = extras["interfering_edge_ratio"][node_tensor]
+            ier_q90 = extras_q["interfering_edge_ratio"]["q90"]
+            ier_q10 = extras_q["interfering_edge_ratio"]["q10"]
+            for i in range(n):
+                if ier[i].item() > ier_q90:
+                    token_sets[i].add("INTERFERING_EDGE_RATIO_HIGH")
+                if ier[i].item() < ier_q10:
+                    token_sets[i].add("LOW_INTERFERENCE_EDGE_RATIO")
+
+        if extras and "clean_view_shift" in extras:
+            cvs = extras["clean_view_shift"][node_tensor]
+            cvs_q90 = extras_q["clean_view_shift"]["q90"]
+            cvs_q10 = extras_q["clean_view_shift"]["q10"]
+            for i in range(n):
+                if cvs[i].item() > cvs_q90:
+                    token_sets[i].add("CLEAN_VIEW_SHIFT_HIGH")
+                if cvs[i].item() < cvs_q10:
+                    token_sets[i].add("CLEAN_VIEW_STABLE")
+
+        # Feature-structure conflict
+        if hasattr(self, '_feat_cos'):
+            feat_cos = self._feat_cos[node_tensor]
+            bottom10_mask = feat_cos < feat_cos_q10
+            top20_mask = feat_cos > feat_cos_q90
+            for i in range(n):
+                if bottom10_mask[i].item():
+                    token_sets[i].add("FEAT_NEIGH_COS_BOTTOM10")
+                if top20_mask[i].item():
+                    token_sets[i].add("FEAT_NEIGH_COS_TOP20")
+
+        if hasattr(self, '_emb_cos'):
+            emb_cos = self._emb_cos[node_tensor]
+            bottom10_mask = emb_cos < emb_cos_q10
+            top20_mask = emb_cos > emb_cos_q90
+            for i in range(n):
+                if bottom10_mask[i].item():
+                    token_sets[i].add("EMB_NEIGH_COS_BOTTOM10")
+                if top20_mask[i].item():
+                    token_sets[i].add("EMB_NEIGH_COS_TOP20")
+
+        if hasattr(self, '_feat_cos') and hasattr(self, '_emb_cos'):
+            feat_cos = self._feat_cos[node_tensor]
+            emb_cos = self._emb_cos[node_tensor]
+            disagree_mask = (feat_cos - emb_cos).abs() > 0.3
+            agree_mask = (feat_cos - emb_cos).abs() < 0.1
+            for i in range(n):
+                if disagree_mask[i].item():
+                    token_sets[i].add("FEATURE_EMBED_DISAGREE_HIGH")
+                if agree_mask[i].item():
+                    token_sets[i].add("FEATURE_EMBED_AGREE_HIGH")
+
+        if hasattr(self, '_neighbor_logit_std'):
+            logit_std = self._neighbor_logit_std[node_tensor]
+            consistency_mask = logit_std < logit_std_q10
+            for i in range(n):
+                if consistency_mask[i].item():
+                    token_sets[i].add("NEIGHBOR_CONSISTENCY_HIGH")
+
+        # Two-hop consistency (requires per-node neighbor lookup)
+        row, col = self.edge_index
+        for i, node_id in enumerate(node_ids):
+            neighbor_mask = row == node_id
+            neighbor_ids = col[neighbor_mask]
+            if len(neighbor_ids) > 0:
+                one_hop_set = set(neighbor_ids.tolist()) | {node_id}
+                two_hop_set: set[int] = set()
+                for nid in neighbor_ids.tolist():
+                    two_hop_set.update(col[row == nid].tolist())
+                overlap = two_hop_set & one_hop_set
+                frac = len(overlap) / len(two_hop_set) if len(two_hop_set) > 0 else 0.0
+                if frac > 0.5:
+                    token_sets[i].add("TWO_HOP_CONSISTENCY_HIGH")
+
+        # Build results dict
+        results: dict[int, list[str]] = {}
+        for i, node_id in enumerate(node_ids):
+            results[node_id] = sorted(token_sets[i])
+
+        return results
 
     @staticmethod
     def _ratio_to_level(ratio: float) -> str:

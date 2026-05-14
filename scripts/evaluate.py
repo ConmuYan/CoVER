@@ -177,6 +177,14 @@ def main():
                 },
             }
 
+            other_mode = "val_macro_f1" if args.threshold_mode == "val_f1" else "val_f1"
+            other_metric_key = "macro_f1" if args.threshold_mode == "val_f1" else "f1"
+            other_threshold, other_score, _ = find_best_threshold(
+                y_val_np, prob_val, metric=other_metric_key,
+            )
+            other_test_metrics = evaluate_with_threshold(y_test_np, prob_test, other_threshold)
+            calibrated_result[f"{other_mode}_threshold_metrics"] = other_test_metrics
+
             calibrated_path = results_dir / "stage1_calibrated_metrics.json"
             with open(calibrated_path, "w") as f:
                 json.dump(calibrated_result, f, indent=2)

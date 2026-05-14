@@ -13,14 +13,14 @@ def test_stage3_debug_creates_artifacts(tmp_path, monkeypatch):
 
     import subprocess
     result = subprocess.run(
-        ["python", "scripts/train_stage3.py", "--config", "configs/yelpchi_gcn.yaml", "--debug"],
+        ["python", "scripts/train_stage3.py", "--config", "configs/yelpchi_bwgnn.yaml", "--debug"],
         capture_output=True, text=True, timeout=120,
     )
 
     assert result.returncode == 0, f"Script failed: {result.stderr}"
 
-    reasoner_path = Path("artifacts/checkpoints/yelpchi/gcn/seed_0/reasoner.pt")
+    reasoner_path = Path("artifacts/checkpoints/yelpchi/bwgnn/rule/seed_0/reasoner.pt")
     assert reasoner_path.exists(), "reasoner.pt not created"
 
-    metrics_path = Path("artifacts/logs/yelpchi/gcn/seed_0/stage3.json")
+    metrics_path = Path("artifacts/logs/yelpchi/bwgnn/rule/seed_0/stage3.json")
     assert metrics_path.exists(), "stage3.json not created"

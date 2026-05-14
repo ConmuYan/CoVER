@@ -28,6 +28,18 @@ FRAUD_SPECIFIC_TYPES = frozenset({
     "relation_or_burst_anomaly",
 })
 
+VALID_DIRECTIONS = frozenset({
+    "increase_risk",
+    "decrease_risk",
+    "uncertain",
+})
+
+VALID_STRENGTHS = frozenset({
+    "weak",
+    "moderate",
+    "strong",
+})
+
 
 def load_contracts(path: str | Path | None = None) -> dict[str, Any]:
     if path is None:
@@ -54,7 +66,10 @@ class EvidenceContractVerifier:
         reasons: list[str] = []
 
         reasons += self._check_schema(err)
+        reasons += self._check_direction_fields(err)
+        reasons += self._check_direction_consistency(err)
         reasons += self._check_availability(err, card)
+        reasons += self._check_uncertainty_factors(err, card)
         reasons += self._check_role_consistency(err, card)
         reasons += self._check_contract(err, card)
         reasons += self._check_score_blindness(err)
@@ -149,6 +164,56 @@ class EvidenceContractVerifier:
         cited = set(err.supporting_evidence) | set(err.counter_evidence)
         if cited & SCORE_LEAKAGE_KEYS:
             reasons.append("score_leakage")
+        return reasons
+
+    def _check_direction_fields(self, err: ERR) -> list[str]:
+        if not hasattr(err, "evidence_direction"):
+            return []
+        reasons = []
+        if err.evidence_direction not in VALID_DIRECTIONS:
+            reasons.append("invalid_direction")
+        if hasattr(err, "evidence_strength") and err.evidence_strength not in VALID_STRENGTHS:
+            reasons.append("invalid_strength")
+        return reasons
+
+    def _check_direction_consistency(self, err: ERR) -> list[str]:
+        if not hasattr(err, "evidence_direction"):
+            return []
+        reasons = []
+        direction = err.evidence_direction
+
+        if direction == "increase_risk":
+            if not err.supporting_evidence and err.risk_type != "weak_or_uncertain_evidence":
+                reasons.append("direction_consistency")
+        elif direction == "decrease_risk":
+            if not err.counter_evidence:
+                has_uncertainty = (
+                    hasattr(err, "uncertainty_factors")
+                    and bool(err.uncertainty_factors)
+                )
+                if not has_uncertainty:
+                    reasons.append("direction_consistency")
+        elif direction == "uncertain":
+            pass  # soft check only
+
+        return reasons
+
+    def _check_uncertainty_factors(self, err: ERR, card: EvidenceCard) -> list[str]:
+        if not hasattr(err, "uncertainty_factors"):
+            return []
+        reasons = []
+        rea = card.reasoning
+        available_fields = {
+            "degree_level", "neighbor_consistency", "feature_neighbor_discrepancy",
+            "detector_signal", "detector_signal_strength", "counter_signal",
+        }
+        available_ids = set(rea.allowed_support_ids) | set(rea.allowed_counter_ids)
+        available = available_fields | available_ids
+
+        cited = set(err.uncertainty_factors)
+        unavailable = cited - available
+        if unavailable:
+            reasons.append("unavailable_uncertainty_factors")
         return reasons
 
     def _check_label_compatibility(self, err: ERR, label: int) -> list[str]:
