@@ -1,41 +1,69 @@
 # AGENTS.md
 
-## Project Goal
+## Current Project State
 
-This repository implements CoVER-FD: Contract-Verified Evidence Distillation for LLM-Free Fake Review Detection.
+The final CoVER method is **CoVER-REL**.
 
-The main task is binary graph fraud detection on YelpChi and Amazon. The target pipeline has three stages:
+- **CoVER-REL-Gate** is the main quantitative model and deployment-friendly relation-only detector.
+- **CoVER-REL-Judge** is the LLM-assisted research extension for score-blind structured judgement and explanation.
+- CoVER-DIR, CV-SCD, and CoVER-LIFT are exploratory or negative routes. Do not restart them as the main method.
 
-1. Train a base GNN detector.
-2. Generate score-blind structural evidence cards, ask an offline LLM teacher to produce ERR records, and verify them with deterministic evidence contracts.
-3. Train an evidence-conditioned student reasoner with supervised detection loss and accepted ERR distillation loss.
+Current final results are improvements over the fresh BWGNN baseline:
 
-Do not build a large framework. Keep the code small, explicit, and research-friendly.
+| Dataset | Main Model | Gate Delta AUPRC vs Fresh BWGNN | Judge Delta AUPRC vs Gate |
+|---|---|---:|---:|
+| YelpChi | CoVER-REL-Gate | +0.026585 | +0.000010 |
+| Amazon | CoVER-REL-Gate | +0.003508 | +0.000224 |
 
-## Key Method Constraints
+Do not claim state of the art unless an explicit SOTA comparison is added.
 
-- LLM is offline only.
-- No LLM call during model training except the explicit Stage 2 generation script.
-- No LLM call during inference.
-- The LLM prompt must not contain base_score, probability, logit, confidence, or raw prediction labels.
-- ERR summary is for human inspection only and must not be used in loss.
-- Rejected ERR records must not contribute to evidence distillation loss.
-- If accepted ERR count is zero in a batch, fall back to supervised task loss.
-- rho=0 in the reasoner must make final_logit equal base_logit.
+## Operational Rules
+
+- Use CoVER-REL-Gate as the main model for performance claims.
+- Use CoVER-REL-Judge only as the explanation-oriented LLM-assisted research extension.
+- Preserve score-blind packet and prompt boundaries.
+- Preserve train-only prototype construction.
+- Never expose base score, probability, logit, confidence, base prediction, target label, split identity, FN/FP/base-error status, or ground truth to an LLM.
+- Rejected judge outputs must not enter fusion training.
+- `short_explanation` is human-facing only and must not be used in loss.
+- Stage3 training consumes accepted judge features and must not call Qwen.
+
+## Before Modifying Models
+
+Check whether the change affects:
+
+- relation feature extraction;
+- schema-aware gate behavior;
+- forbidden-field safety;
+- train/val/test leakage;
+- final result tables and paper artifacts.
+
+If asked to improve metrics, inspect relation and gate diagnostics first. Do not start from LLM prompt tuning.
+
+## Paper and Artifact Guidance
+
+If asked to update paper text or results, use:
+
+```text
+artifacts/paper/
+artifacts/tables/paper_*.md
+artifacts/reports/cover_rel_judge_safety_audit.md
+```
+
+Never invent numbers. Only use metrics from saved artifacts.
 
 ## Coding Style
 
+- Keep code small, explicit, and research-friendly.
 - Prefer simple PyTorch / PyG code.
 - Avoid unnecessary abstraction.
-- Each module should be under 300 lines unless unavoidable.
-- Use type hints for public functions.
-- Add docstrings only where they clarify non-obvious logic.
 - Use deterministic seeds.
 - Save config, seed, git hash, metrics, and checkpoint path for every run.
+- Prefer concise progress updates and artifact-backed claims.
 
-## Required Tests
+## Required Tests For Code Changes
 
-Before claiming a task is complete, run:
+For code changes, run:
 
 ```bash
 pytest -q
@@ -45,27 +73,14 @@ python scripts/train_stage3.py --config configs/yelpchi_gcn.yaml --debug
 python scripts/evaluate.py --config configs/yelpchi_gcn.yaml --debug
 ```
 
-If a command fails, report the exact error and the file/function likely responsible.
+For documentation-only changes, do not run experiments. Run lightweight markdown or text sanity checks if available.
 
-## External Repositories
+## Expected Deliverables
 
-Reference repositories may be cloned into `external/`, but do not directly copy large code blocks unless the license permits it.
-
-Use external code only for:
-
-* understanding data format,
-* checking model architecture,
-* reproducing baseline behavior,
-* comparing training scripts.
-
-Our own implementation should live in this repository.
-
-## Expected Deliverables Per Task
-
-For every coding task, provide:
+For every task, report:
 
 1. Files changed.
-2. What was implemented.
-3. How it was tested.
+2. What was implemented or edited.
+3. How it was checked.
 4. Remaining limitations.
 5. Next recommended step.
