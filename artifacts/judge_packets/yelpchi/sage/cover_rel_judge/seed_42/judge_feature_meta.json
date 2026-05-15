@@ -1,0 +1,116 @@
+{
+  "accepted_only": true,
+  "base_score_used": false,
+  "evidence_fields": [
+    "gate_evidence.optional_relation_gate_buckets.RSR",
+    "gate_evidence.optional_relation_gate_buckets.RTR",
+    "gate_evidence.optional_relation_gate_buckets.RUR",
+    "gate_evidence.optional_relation_open_flags.RSR",
+    "gate_evidence.optional_relation_open_flags.RTR",
+    "gate_evidence.optional_relation_open_flags.RUR",
+    "graph_diagnostic_evidence.band_response_bucket",
+    "graph_diagnostic_evidence.embedding_neighbor_discrepancy_bucket",
+    "graph_diagnostic_evidence.feature_structure_conflict_bucket",
+    "relation_evidence.RSR.benign_prototype_distance_bucket",
+    "relation_evidence.RSR.degree_bucket",
+    "relation_evidence.RSR.feature_deviation_bucket",
+    "relation_evidence.RSR.fraud_prototype_distance_bucket",
+    "relation_evidence.RSR.neighbor_consistency_bucket",
+    "relation_evidence.RSR.prototype_margin_bucket",
+    "relation_evidence.RSR.relation_token_list.ANON_FEATURE_RELATION_ZSCORE_HIGH",
+    "relation_evidence.RSR.relation_token_list.RELATION_PROTO_CONFLICT_HIGH",
+    "relation_evidence.RSR.relation_token_list.RSR_BENIGN_PROTO_CLOSE",
+    "relation_evidence.RSR.relation_token_list.RSR_DEGREE_LOW",
+    "relation_evidence.RSR.relation_token_list.RSR_DEGREE_TOP10",
+    "relation_evidence.RSR.relation_token_list.RSR_FEATURE_DEVIATION_HIGH",
+    "relation_evidence.RSR.relation_token_list.RSR_FRAUD_PROTO_CLOSE",
+    "relation_evidence.RSR.relation_token_list.RSR_NEIGHBOR_CONSISTENCY_LOW",
+    "relation_evidence.RSR.relation_token_list.RSR_ZSCORE_HIGH_COUNT",
+    "relation_evidence.RSR.zscore_outlier_bucket",
+    "relation_evidence.RTR.benign_prototype_distance_bucket",
+    "relation_evidence.RTR.degree_bucket",
+    "relation_evidence.RTR.feature_deviation_bucket",
+    "relation_evidence.RTR.fraud_prototype_distance_bucket",
+    "relation_evidence.RTR.neighbor_consistency_bucket",
+    "relation_evidence.RTR.prototype_margin_bucket",
+    "relation_evidence.RTR.relation_token_list.ANON_FEATURE_RELATION_ZSCORE_HIGH",
+    "relation_evidence.RTR.relation_token_list.RELATION_PROTO_CONFLICT_HIGH",
+    "relation_evidence.RTR.relation_token_list.RTR_BENIGN_PROTO_CLOSE",
+    "relation_evidence.RTR.relation_token_list.RTR_DEGREE_LOW",
+    "relation_evidence.RTR.relation_token_list.RTR_DEGREE_TOP10",
+    "relation_evidence.RTR.relation_token_list.RTR_FEATURE_DEVIATION_HIGH",
+    "relation_evidence.RTR.relation_token_list.RTR_FRAUD_PROTO_CLOSE",
+    "relation_evidence.RTR.relation_token_list.RTR_NEIGHBOR_CONSISTENCY_LOW",
+    "relation_evidence.RTR.relation_token_list.RTR_ZSCORE_HIGH_COUNT",
+    "relation_evidence.RTR.zscore_outlier_bucket",
+    "relation_evidence.RUR.benign_prototype_distance_bucket",
+    "relation_evidence.RUR.degree_bucket",
+    "relation_evidence.RUR.feature_deviation_bucket",
+    "relation_evidence.RUR.fraud_prototype_distance_bucket",
+    "relation_evidence.RUR.neighbor_consistency_bucket",
+    "relation_evidence.RUR.prototype_margin_bucket",
+    "relation_evidence.RUR.relation_token_list.ANON_FEATURE_RELATION_ZSCORE_HIGH",
+    "relation_evidence.RUR.relation_token_list.RELATION_PROTO_CONFLICT_HIGH",
+    "relation_evidence.RUR.relation_token_list.RUR_BENIGN_PROTO_CLOSE",
+    "relation_evidence.RUR.relation_token_list.RUR_DEGREE_LOW",
+    "relation_evidence.RUR.relation_token_list.RUR_DEGREE_TOP10",
+    "relation_evidence.RUR.relation_token_list.RUR_FEATURE_DEVIATION_HIGH",
+    "relation_evidence.RUR.relation_token_list.RUR_FRAUD_PROTO_CLOSE",
+    "relation_evidence.RUR.relation_token_list.RUR_NEIGHBOR_CONSISTENCY_LOW",
+    "relation_evidence.RUR.relation_token_list.RUR_ZSCORE_HIGH_COUNT",
+    "relation_evidence.RUR.zscore_outlier_bucket"
+  ],
+  "feature_dim": 184,
+  "layout": {
+    "counter_count": 8,
+    "counter_mask": [
+      70,
+      127
+    ],
+    "key_relation_is_primary": 6,
+    "key_relation_one_hot": [
+      10,
+      13
+    ],
+    "strength_one_hot": [
+      3,
+      6
+    ],
+    "support_count": 7,
+    "support_mask": [
+      13,
+      70
+    ],
+    "uncertain_flag": 9,
+    "uncertainty_mask": [
+      127,
+      184
+    ],
+    "verdict_one_hot": [
+      0,
+      3
+    ]
+  },
+  "num_accepted": 36,
+  "num_rejected": 84,
+  "primary_relation": "RUR",
+  "relation_names": [
+    "RUR",
+    "RSR",
+    "RTR"
+  ],
+  "score_blind": true,
+  "short_explanation_used_for_loss": false,
+  "strength_distribution": {
+    "moderate": 1,
+    "strong": 35
+  },
+  "summary_used": false,
+  "target_label_used": false,
+  "verdict_distribution": {
+    "fake": 22,
+    "real": 12,
+    "uncertain": 2
+  },
+  "verifier_active": true
+}

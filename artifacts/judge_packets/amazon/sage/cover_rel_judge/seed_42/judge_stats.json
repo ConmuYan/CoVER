@@ -1,0 +1,17 @@
+{
+  "acceptance_rate": 0.55,
+  "backend": "qwen",
+  "model_path": "/data1/mq/models/Qwen3-4B-Instruct-2507",
+  "num_accepted": 66,
+  "num_packets_processed": 120,
+  "num_rejected": 54,
+  "strength_distribution": {
+    "moderate": 7,
+    "strong": 59
+  },
+  "verdict_distribution": {
+    "fake": 49,
+    "real": 11,
+    "uncertain": 6
+  }
+}

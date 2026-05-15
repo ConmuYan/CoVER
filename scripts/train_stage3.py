@@ -1009,12 +1009,16 @@ def main():
         )
         epochs = config["train"].get("epochs", 200)
 
+    extra_kwargs = {}
+    if "attention_heads" in config["model"]:
+        extra_kwargs["attention_heads"] = config["model"]["attention_heads"]
     base_model = build_detector(
         name=model_name,
         in_channels=data.x.shape[1],
         hidden_channels=config["model"].get("hidden_dim", 64),
         num_layers=config["model"].get("num_layers", 2),
         dropout=config["model"].get("dropout", 0.5),
+        **extra_kwargs,
     ).to(device)
 
     checkpoint_path = get_base_checkpoint_path(dataset_name, model_name, seed)

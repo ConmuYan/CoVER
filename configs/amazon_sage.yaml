@@ -1,0 +1,87 @@
+project: cover_fd
+dataset:
+  name: amazon
+  path: /data1/mq/codes/awesome-graph-anomaly-detection/cover-fd/datasets/Amazon.mat
+  format: mat
+  split_mode: supervised
+  train_ratio: 0.4
+  val_test_ratio: [1, 2]
+  scarcity_ratio: 1.0
+  stratified: true
+
+model:
+  name: sage
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.5
+
+train:
+  seed: 0
+  epochs: 100
+  debug_epochs: 3
+  lr: 0.01
+  optimizer: adam
+  weight_decay: 0.0005
+  patience: 100
+  device: cuda:0
+  select_metric: macro_f1
+
+gpu:
+  train_visible_devices: "3"
+  llm_visible_devices: "3"
+  qwen_parallel_visible_devices: "2,3"
+  default_train_device: cuda:0
+  default_llm_device: cuda:0
+
+run:
+  teacher: rule
+  run_name: rule
+  seed: 0
+
+stage2:
+  trace_sampler: error_aware
+  trace_size: 200
+  trace_size_debug: 32
+
+evidence:
+  trace_size: 1000
+  trace_size_small: 32
+  teacher: rule
+  use_verifier: true
+  use_counter: true
+
+llm:
+  backend: transformers_local
+  model_name_or_path: /data1/mq/models/Qwen3-4B-Instruct-2507
+  temperature: 0.0
+  max_retries: 3
+  max_new_tokens: 256
+  device_map: auto
+  torch_dtype: auto
+  trust_remote_code: true
+  max_trace_nodes_debug: 8
+  max_trace_nodes_small: 32
+  enable_verifier_retry: true
+  max_verifier_retries: 1
+  max_parse_retries: 1
+  visible_devices: "3"
+
+reasoner:
+  hidden_dim: 128
+  evidence_emb_dim: 16
+  rho: 0.1
+  lambda_evi: 0.3
+  use_type_loss: true
+  use_evidence_loss: true
+  use_residual_gate: true
+  gate_mode: safe_residual
+  delta_scale: 2.0
+  gate_bias_init: -2.0
+  residual_init_zero: true
+  residual_l2_weight: 0.001
+  max_shift_penalty_weight: 0.001
+  max_abs_shift: 2.0
+  threshold_mode: val_macro_f1
+
+eval:
+  k_values: [50, 100, 200]

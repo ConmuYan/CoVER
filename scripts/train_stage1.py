@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+# Set CUBLAS workspace config BEFORE importing torch to enable deterministic
+# cuBLAS reductions. This matches the BWGNN deterministic baseline protocol
+# documented in PROGRESS.md "Stage 1 Re-training (Deterministic Baseline)".
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 import torch
 import torch.nn.functional as F
@@ -75,7 +81,13 @@ def main():
     parser.add_argument("--run_name", type=str, default="base")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--stratified", action="store_true", help="Use stratified split")
+    parser.add_argument("--deterministic", action="store_true",
+                        help="Enable deterministic CUDA ops and save retraining_metrics.json")
     args = parser.parse_args()
+
+    if args.debug and args.run_name == "base":
+        args.run_name = "debug"
+        print("[DEBUG] Forcing run_name=debug to avoid overwriting production checkpoints")
 
     with open(args.config) as f:
         config = yaml.safe_load(f)
@@ -89,6 +101,16 @@ def main():
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    # GAT's scatter_add_ deterministic implementation requires ~3x more GPU memory,
+    # causing OOM on dense graphs (YelpChi 7.7M edges). Skip deterministic_algorithms
+    # for GAT; rely on manual seeding + cudnn flags for reproducibility.
+    # BWGNN/GCN/SAGE use the full deterministic path.
+    model_name = config["model"]["name"]
+    if model_name != "gat":
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
     requested_device = str(config["train"].get("device", "cuda" if torch.cuda.is_available() else "cpu"))
     if requested_device.startswith("cuda") and not torch.cuda.is_available():
@@ -112,12 +134,16 @@ def main():
         epochs = config["train"]["epochs"]
 
     model_cfg = config["model"]
+    extra_kwargs = {}
+    if "attention_heads" in model_cfg:
+        extra_kwargs["attention_heads"] = model_cfg["attention_heads"]
     model = build_detector(
         name=model_cfg["name"],
         in_channels=data.x.shape[1],
         hidden_channels=model_cfg.get("hidden_dim", 64),
         num_layers=model_cfg.get("num_layers", 2),
         dropout=model_cfg.get("dropout", 0.5),
+        **extra_kwargs,
     ).to(device)
 
     optimizer = torch.optim.Adam(
@@ -209,6 +235,24 @@ def main():
 
     print(f"\nCheckpoint saved to: {checkpoint_path}")
     print(f"Metrics saved to: {log_dir / 'stage1.json'}")
+
+    if args.deterministic:
+        retrain_path = checkpoint_dir / "retraining_metrics.json"
+        retrain_info = {
+            "seed": seed,
+            "git_hash": get_git_hash(),
+            "deterministic": True,
+            "config_path": args.config,
+            "run_name": run_name,
+            "model_name": model_cfg["name"],
+            "dataset": dataset_name,
+            "epochs_trained": epoch,
+            "elapsed_seconds": elapsed,
+            "test_metrics": test_metrics,
+        }
+        with open(retrain_path, "w") as f:
+            json.dump(retrain_info, f, indent=2)
+        print(f"Retraining metrics saved to: {retrain_path}")
 
 
 if __name__ == "__main__":

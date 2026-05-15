@@ -5,10 +5,11 @@ dataset:
   format: mat
   split_mode: supervised
   train_ratio: 0.4
-  val_test_ratio: [1, 2]
+  val_test_ratio:
+  - 1
+  - 2
   scarcity_ratio: 1.0
   stratified: true
-
 model:
   name: bwgnn
   hidden_dim: 64
@@ -16,7 +17,6 @@ model:
   dropout: 0.3
   num_bands: 3
   agg: concat
-
 train:
   seed: 123
   epochs: 100
@@ -27,7 +27,6 @@ train:
   patience: 100
   device: cuda:0
   select_metric: auprc
-
 reasoner:
   hidden_dim: 128
   evidence_emb_dim: 16
@@ -42,7 +41,9 @@ reasoner:
   relation_hidden_dim: 32
   relation_fusion_mode: anchor_gate
   anchor_relation: UVU
-  optional_relations: [UPU, USU]
+  optional_relations:
+  - UPU
+  - USU
   lambda_gate_sparse: 0.0001
   relation_dropout: 0.1
   log_relation_gates: true
@@ -61,6 +62,8 @@ reasoner:
   delta_scale: 2.0
   max_allowed_shift: 0.2
   threshold_mode: val_macro_f1
-
 eval:
-  k_values: [50, 100, 200]
+  k_values:
+  - 50
+  - 100
+  - 200

@@ -8,12 +8,14 @@ The final CoVER method is **CoVER-REL**.
 - **CoVER-REL-Judge** is the LLM-assisted research extension for score-blind structured judgement and explanation.
 - CoVER-DIR, CV-SCD, and CoVER-LIFT are exploratory or negative routes. Do not restart them as the main method.
 
-Current final results are improvements over the fresh BWGNN baseline:
+Current final results are improvements over the **deterministic BWGNN baseline** (retrained 2026-05-15 with `torch.use_deterministic_algorithms(True)`, see PROGRESS.md "Stage 1 Re-training (Deterministic Baseline, 2026-05-15)"):
 
-| Dataset | Main Model | Gate Delta AUPRC vs Fresh BWGNN | Judge Delta AUPRC vs Gate |
+| Dataset | Main Model | Gate Delta AUPRC vs BWGNN | Judge Delta AUPRC vs Gate |
 |---|---|---:|---:|
-| YelpChi | CoVER-REL-Gate | +0.026585 | +0.000010 |
-| Amazon | CoVER-REL-Gate | +0.003508 | +0.000224 |
+| YelpChi | CoVER-REL-Gate | +0.0325 | +0.0007 |
+| Amazon | CoVER-REL-Gate | +0.0017 | +0.0003 |
+
+Reference deltas before the deterministic re-baselining (kept for audit only): YelpChi +0.026585 / Amazon +0.003508 vs the previous non-deterministic BWGNN; Judge over Gate was +0.000010 / +0.000224. Sign and order match the new deterministic numbers.
 
 Do not claim state of the art unless an explicit SOTA comparison is added.
 

@@ -96,14 +96,18 @@ def compute_gate_values(config: dict[str, Any], stage3_config: dict[str, Any], d
     model_name = config["model"]["name"]
     seed = int(stage3_config["seed"])
     model_cfg = config["model"]
-    model = build_detector(
+    detector_kwargs = dict(
         name=model_cfg["name"],
         in_channels=data.x.shape[1],
         hidden_channels=model_cfg.get("hidden_dim", 64),
         num_layers=model_cfg.get("num_layers", 2),
         dropout=model_cfg.get("dropout", 0.5),
-        num_bands=model_cfg.get("num_bands", 3),
-    ).to(device)
+    )
+    if "num_bands" in model_cfg:
+        detector_kwargs["num_bands"] = model_cfg["num_bands"]
+    if "attention_heads" in model_cfg:
+        detector_kwargs["attention_heads"] = model_cfg["attention_heads"]
+    model = build_detector(**detector_kwargs).to(device)
     base_path = get_base_checkpoint_path(dataset_name, model_name, seed)
     model.load_state_dict(torch.load(base_path, map_location=device, weights_only=False))
     model.eval()

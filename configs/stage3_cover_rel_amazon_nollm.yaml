@@ -40,6 +40,15 @@ reasoner:
   relation_set: all
   relation_dim: 27
   relation_hidden_dim: 32
+  relation_fusion_mode: anchor_gate
+  anchor_relation: UVU
+  optional_relations: [UPU, USU]
+  lambda_gate_sparse: 0.0001
+  relation_dropout: 0.1
+  log_relation_gates: true
+  gate_hidden_dim: 64
+  gate_temperature: 1.0
+  gate_warmup_epochs: 0
   latent_dim: 256
   rho: 0.1
   delta_scale: 2.0

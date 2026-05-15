@@ -1,0 +1,17 @@
+{
+  "dataset": "yelpchi",
+  "model": "sage",
+  "num_packets": 120,
+  "primary_relation": "RUR",
+  "relation_feature_meta_path": "artifacts/relation_features/yelpchi/sage/seed_2026/all/rel_feature_meta.json",
+  "relation_fusion_source": "cover_rel_anchor_gate_nollm",
+  "relation_schema": [
+    "RUR",
+    "RSR",
+    "RTR"
+  ],
+  "score_blind": true,
+  "seed": 2026,
+  "target_label_used": false,
+  "test_label_used": false
+}

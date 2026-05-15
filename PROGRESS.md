@@ -714,7 +714,7 @@ artifacts/tables/final_auxonly_comparison.md                  ✅ New
 
 ---
 
-## Stage 1 Re-training (Latest Config)
+## Stage 1 Re-training (Deterministic Baseline, 2026-05-15)
 
 ### Configuration
 
@@ -727,26 +727,114 @@ artifacts/tables/final_auxonly_comparison.md                  ✅ New
 | epochs | 100 |
 | lr | 0.01 |
 | hidden_dim | 64 |
+| num_bands | 3 |
+| dropout | 0.3 |
 | select_metric | macro_f1 |
 | patience | 100 (no early stopping) |
 | seeds | 42, 123, 456, 789, 2026 |
+| determinism | `torch.use_deterministic_algorithms(True, warn_only=True)` + cuDNN deterministic + `CUBLAS_WORKSPACE_CONFIG=:4096:8` |
+| trainer | `scripts/retrain_baseline.py` |
+| environment | RTX 3090, PyTorch (current env), PyG message-passing |
+| reproducibility | bit-exact across reruns on same hardware/library versions (verified 3 reruns to 1e-15) |
 
-### Results (5 seeds)
+### Results (5 seeds, deterministic)
 
 | Dataset | Seed | ROC-AUC | AUPRC | Macro-F1 | G-Means |
 |---------|------|---------|-------|----------|---------|
-| Amazon | 42 | 0.9717 | 0.8688 | 0.9152 | 0.8766 |
-| Amazon | 123 | 0.9820 | 0.8600 | 0.9167 | 0.8815 |
-| Amazon | 456 | 0.9753 | 0.8591 | 0.9134 | 0.8748 |
-| Amazon | 789 | 0.9151 | 0.8121 | 0.9124 | 0.8778 |
-| Amazon | 2026 | 0.9485 | 0.8560 | 0.9273 | 0.8986 |
-| **Amazon** | **mean±std** | **0.9585±0.0261** | **0.8512±0.0214** | **0.9170±0.0058** | **0.8819±0.0089** |
-| YelpChi | 42 | 0.7760 | 0.4139 | 0.6250 | 0.4712 |
-| YelpChi | 123 | 0.8115 | 0.4780 | 0.6656 | 0.5471 |
-| YelpChi | 456 | 0.8068 | 0.4659 | 0.6518 | 0.5178 |
-| YelpChi | 789 | 0.8061 | 0.4600 | 0.6396 | 0.4991 |
-| YelpChi | 2026 | 0.8066 | 0.4707 | 0.6076 | 0.4216 |
-| **YelpChi** | **mean±std** | **0.8014±0.0137** | **0.4577±0.0236** | **0.6379±0.0213** | **0.4914±0.0441** |
+| Amazon | 42 | 0.9695 | 0.8648 | 0.9123 | 0.8682 |
+| Amazon | 123 | 0.9820 | 0.8594 | 0.9167 | 0.8815 |
+| Amazon | 456 | 0.9760 | 0.8605 | 0.9137 | 0.8764 |
+| Amazon | 789 | 0.9662 | 0.8422 | 0.9162 | 0.8783 |
+| Amazon | 2026 | 0.9797 | 0.8946 | 0.9250 | 0.9030 |
+| **Amazon** | **mean±std** | **0.9747±0.0067** | **0.8643±0.0190** | **0.9168±0.0049** | **0.8815±0.0130** |
+| YelpChi | 42 | 0.7958 | 0.4428 | 0.6305 | 0.4758 |
+| YelpChi | 123 | 0.8153 | 0.4824 | 0.6702 | 0.5591 |
+| YelpChi | 456 | 0.8076 | 0.4696 | 0.6411 | 0.4924 |
+| YelpChi | 789 | 0.8150 | 0.4760 | 0.6594 | 0.5358 |
+| YelpChi | 2026 | 0.8046 | 0.4659 | 0.6404 | 0.4892 |
+| **YelpChi** | **mean±std** | **0.8076±0.0081** | **0.4674±0.0151** | **0.6483±0.0161** | **0.5105±0.0353** |
+
+Artifacts:
+- `artifacts/checkpoints/{ds}/bwgnn/base/seed_X/base.pt` — deterministic checkpoint (replaces previous non-deterministic base.pt)
+- `artifacts/checkpoints/{ds}/bwgnn/base/seed_X/retraining_metrics.json` — full metric record + git_hash + config_path
+- `artifacts/checkpoints/{ds}/bwgnn/base/seed_42/tsne.png` — test-set embedding t-SNE (yelpchi + amazon)
+- `artifacts/results/{ds}/bwgnn/base/seed_X/stage1_metrics.json` — kept for downstream-script compatibility
+
+### Migration Note (vs Previous Non-Deterministic Baseline)
+
+The previous baseline used `torch.manual_seed` only and ran on cuDNN with non-deterministic `index_add_` paths. Per-seed metrics differed by 0.5%~2% between runs and could not be bit-reproduced. The current baseline is bit-exact reproducible. Δ vs the old table:
+
+| Dataset | Metric | Old mean | New mean | Δ |
+|---|---|---:|---:|---:|
+| YelpChi | ROC-AUC | 0.8014 | 0.8076 | +0.0062 |
+| YelpChi | AUPRC | 0.4577 | 0.4674 | +0.0097 |
+| YelpChi | Macro-F1 | 0.6379 | 0.6483 | +0.0104 |
+| YelpChi | G-Means | 0.4914 | 0.5105 | +0.0191 |
+| Amazon | ROC-AUC | 0.9585 | 0.9747 | +0.0162 |
+| Amazon | AUPRC | 0.8512 | 0.8643 | +0.0131 |
+| Amazon | Macro-F1 | 0.9170 | 0.9168 | -0.0002 |
+| Amazon | G-Means | 0.8819 | 0.8815 | -0.0004 |
+
+All deltas are within the original std on YelpChi; Amazon Macro-F1/G-Means almost coincide.
+
+### CoVER-REL Gate (cover_rel_anchor_gate_nollm, retrained against new base.pt)
+
+5 seeds, `configs/stage3_cover_rel_gate_nollm.yaml` / `stage3_cover_rel_amazon_nollm.yaml`, `--use_relation_features --stratified`, stage2_run_name=rule. Stage3 run_name=`cover_rel_anchor_gate_nollm` (loss_mode=cover_lift, relation_fusion_mode=anchor_gate). Reasoner saved to `artifacts/checkpoints/{ds}/bwgnn/cover_rel_anchor_gate_nollm/seed_X/reasoner.pt`.
+
+| Dataset | Seed | ROC-AUC | AUPRC | Macro-F1 | G-Means |
+|---------|------|---------|-------|----------|---------|
+| YelpChi | 42 | 0.8033 | 0.4636 | 0.6283 | 0.4641 |
+| YelpChi | 123 | 0.8260 | 0.5182 | 0.6883 | 0.5866 |
+| YelpChi | 456 | 0.8171 | 0.5036 | 0.6499 | 0.5018 |
+| YelpChi | 789 | 0.8249 | 0.5079 | 0.6738 | 0.5577 |
+| YelpChi | 2026 | 0.8169 | 0.5058 | 0.6587 | 0.5163 |
+| **YelpChi** | **mean±std** | **0.8177±0.0091** | **0.4998±0.0210** | **0.6598±0.0229** | **0.5253±0.0479** |
+| Amazon | 42 | 0.9706 | 0.8668 | 0.9144 | 0.8717 |
+| Amazon | 123 | 0.9820 | 0.8596 | 0.9167 | 0.8815 |
+| Amazon | 456 | 0.9767 | 0.8645 | 0.9127 | 0.8794 |
+| Amazon | 789 | 0.9668 | 0.8443 | 0.9174 | 0.8816 |
+| Amazon | 2026 | 0.9800 | 0.8951 | 0.9255 | 0.9015 |
+| **Amazon** | **mean±std** | **0.9752±0.0064** | **0.8661±0.0185** | **0.9174±0.0049** | **0.8832±0.0110** |
+
+Gate Δ vs new BWGNN baseline (mean):
+
+| Dataset | ΔROC-AUC | ΔAUPRC | ΔMacro-F1 | ΔG-Means |
+|---|---:|---:|---:|---:|
+| YelpChi | +0.0100 | **+0.0325** | +0.0115 | +0.0148 |
+| Amazon | +0.0005 | **+0.0017** | +0.0006 | +0.0017 |
+
+### CoVER-REL Judge (cover_rel_judge_strength_gate, full LLM pipeline)
+
+Pipeline: build_judge_packets (120 nodes/seed, anchor_gate as source) → generate_llm_judge (Qwen3-4B-Instruct-2507, fp16) → train_stage3 with `--use_llm_judge --judge_features_path …`. Configs: `stage3_cover_rel_judge_yelpchi.yaml` / `stage3_cover_rel_judge_amazon.yaml` (loss_mode=cover_judge, fusion_mode=gated_llm_residual, lambda_judge=0.1). Stage3 run_name=`cover_rel_judge_strength_gate`. Reasoner saved to `artifacts/checkpoints/{ds}/bwgnn/cover_rel_judge_strength_gate/seed_X/reasoner.pt`. Accepted-judge counts per seed (yelpchi/amazon):
+
+| Dataset | s42 | s123 | s456 | s789 | s2026 |
+|---|---:|---:|---:|---:|---:|
+| YelpChi | 39 | 57 | 53 | 34 | 49 |
+| Amazon | 73 | 63 | 57 | 57 | 56 |
+
+| Dataset | Seed | ROC-AUC | AUPRC | Macro-F1 | G-Means |
+|---------|------|---------|-------|----------|---------|
+| YelpChi | 42 | 0.8019 | 0.4576 | 0.6440 | 0.5009 |
+| YelpChi | 123 | 0.8286 | 0.5211 | 0.6869 | 0.5819 |
+| YelpChi | 456 | 0.8157 | 0.5037 | 0.6580 | 0.5176 |
+| YelpChi | 789 | 0.8239 | 0.5115 | 0.6799 | 0.5694 |
+| YelpChi | 2026 | 0.8196 | 0.5088 | 0.6564 | 0.5098 |
+| **YelpChi** | **mean±std** | **0.8180±0.0102** | **0.5006±0.0248** | **0.6650±0.0178** | **0.5359±0.0370** |
+| Amazon | 42 | 0.9696 | 0.8654 | 0.9144 | 0.8717 |
+| Amazon | 123 | 0.9826 | 0.8618 | 0.9157 | 0.8798 |
+| Amazon | 456 | 0.9765 | 0.8636 | 0.9127 | 0.8794 |
+| Amazon | 789 | 0.9670 | 0.8456 | 0.9174 | 0.8816 |
+| Amazon | 2026 | 0.9799 | 0.8953 | 0.9235 | 0.9027 |
+| **Amazon** | **mean±std** | **0.9751±0.0067** | **0.8663±0.0180** | **0.9168±0.0042** | **0.8831±0.0116** |
+
+Judge Δ vs Gate (mean):
+
+| Dataset | ΔROC-AUC | ΔAUPRC | ΔMacro-F1 | ΔG-Means |
+|---|---:|---:|---:|---:|
+| YelpChi | +0.0003 | +0.0007 | +0.0052 | +0.0106 |
+| Amazon | -0.0001 | +0.0003 | -0.0006 | -0.0001 |
+
+Judge contribution stays at the order of the previous (non-deterministic) baseline (Δ AUPRC ≈ +1e-3 on YelpChi, ≈ +3e-4 on Amazon). Macro-F1 / G-Means see slightly larger gains on YelpChi (+0.005 / +0.011), suggesting the LLM judge mostly tightens recall on hard YelpChi cases without changing the AUPRC story.
 
 ### Stage 1 → Stage 2 Data Flow
 
@@ -1462,3 +1550,97 @@ Use the generated paper artifacts to draft the manuscript:
 - results narrative from `artifacts/paper/results_narrative.md`;
 - negative-route appendix from `artifacts/paper/appendix_failure_routes.md`;
 - main tables from `artifacts/tables/paper_*.md`.
+
+---
+
+## Task 10 Completion — SAGE Base Adaptation (2026-05-15)
+
+> Status: **PARTIAL** (YelpChi positive, Amazon Phase2 negative)
+
+### Objective
+
+Add SAGE (GraphSAGE) as a second base model to CoVER-FD, mirroring the BWGNN pipeline end-to-end.
+Evaluate whether CoVER-REL's relation evidence mechanism generalizes beyond BWGNN.
+
+### Cross-Base 5-Seed Summary
+
+| Dataset | Base | Stage | AUPRC (5-seed mean ± std) | ΔAUPRC vs own base | Gate Decision |
+|---------|------|-------|---------------------------|-------------------|---------------|
+| YelpChi | SAGE | base | 0.2246 ± 0.1261 | — | — |
+| YelpChi | SAGE | anchor_gate | 0.4465 ± 0.0289 | +0.2219 | — |
+| YelpChi | SAGE | Phase2 E0 | 0.4503 ± 0.0891 | +0.2258 | PASS (5/5) |
+| YelpChi | SAGE | Phase2 E2 (best) | 0.4539 ± 0.0891 | **+0.2293** | PASS |
+| YelpChi | BWGNN | base | 0.4674 ± — | — | — |
+| YelpChi | BWGNN | Phase2 E2 (best) | 0.5676 ± 0.0144 | +0.1002 | PASS |
+| Amazon | SAGE | base | 0.7556 ± 0.0511 | — | — |
+| Amazon | SAGE | anchor_gate | 0.7667 ± 0.0444 | +0.0111 | — |
+| Amazon | SAGE | Phase2 E0 (seed 42) | 0.7415 | +0.0000 | **FAIL** |
+| Amazon | BWGNN | base | 0.8643 ± — | — | — |
+| Amazon | BWGNN | Phase2 E0 | 0.8643 ± 0.0185 | +0.0000 | — |
+
+Sources: `artifacts/tables/phase2_sage_5seed_summary.md`, `artifacts/tables/phase2_5seed_summary.md`
+
+### Key Findings
+
+1. **YelpChi POSITIVE**: Relation evidence transforms SAGE from a near-random detector (AUPRC 0.2246) into a competitive model (AUPRC 0.4539), with consistent gains across all 5 seeds and progressive improvement E0 → E1 → E2. The relative lift (+0.2293) is 2.3x larger than BWGNN's (+0.1002).
+2. **Amazon NEGATIVE at Phase2**: Phase2 E0 showed zero AUPRC improvement on the smoke seed. Strict gate correctly prevented E1/E2 execution, saving ~80 min Qwen GPU time. Note: Stage3 anchor_gate was positive (+0.0111) before Phase2 reasoner training.
+3. **Notable**: SAGE Phase2 E2 nearly closes the gap to BWGNN base on YelpChi (0.4539 vs 0.4674), despite starting from a 2x weaker base. This suggests CoVER-REL's relation evidence is the dominant discriminative signal, not the base model's spectral filters.
+
+### Safety Audit
+
+| Check | Count | Result |
+|-------|-------|--------|
+| Score-blind (relation features + judge packets + forbidden fields) | 30/30 | PASS |
+| LLM gate leak (Phase2 E1 + E2 rejected α) | 10/10 | PASS |
+| Amazon E0 diagnostics | 1/1 | PASS |
+| Determinism (bit-exact re-run) | 1/1 | PASS |
+| pytest | 323 passed, 0 failed | PASS |
+
+Source: `artifacts/reports/sage_safety_audit.md`
+
+### Gate Decisions
+
+| Dataset | Phase2 E0 ΔAUPRC vs SAGE base | Decision | E1/E2 Executed |
+|---------|-------------------------------|----------|----------------|
+| YelpChi | +0.2258 (5/5 seeds positive) | **PASS** | Yes (5 seeds each) |
+| Amazon | +0.0000 (seed 42, Δ ≈ 0) | **FAIL** | No — saved ~80 min Qwen |
+
+### Files Changed
+
+**Configs (10 YAML):**
+`configs/yelpchi_sage.yaml` (rewrite), `configs/amazon_sage.yaml`,
+`configs/stage3_cover_rel_{yelpchi,amazon}_sage_nollm.yaml`,
+`configs/phase2_{yelpchi,amazon}_sage_E{0,1,2}.yaml`
+
+**Scripts (5 shell + 1 Python):**
+`scripts/run_phase1_sage.sh`, `scripts/run_stage3_sage_gate.sh`,
+`scripts/run_judge_sage.sh`, `scripts/run_phase2_sage_experiments.sh`,
+`scripts/aggregate_phase2_sage.py`
+
+**Modified:**
+`scripts/train_stage1.py` (added `--deterministic` flag + retraining_metrics.json output)
+`scripts/build_judge_packets.py` (model-agnostic `num_bands` fix for SAGE)
+
+**Tests:** `tests/test_train_stage1_deterministic.py`
+**Docs:** `docs/sage_paper_alignment.md`
+**External:** `external/williamleif_GraphSAGE/` (reference-only clone)
+
+**Artifacts:**
+`artifacts/tables/phase2_sage_5seed_summary.{csv,md}`,
+`artifacts/tables/phase2_sage_5seed_per_seed.csv`,
+`artifacts/reports/sage_phase2_first_round_conclusion.md`,
+`artifacts/reports/sage_safety_audit.md`
+
+### Verification
+
+- `pytest --tb=no -q`: 323 passed, 2 skipped, 0 failed.
+- SAGE smoke: `train_stage1.py --config configs/yelpchi_sage.yaml --debug --deterministic --seed 42` — passed.
+- Determinism: bit-exact checkpoint match on re-run (verifier-confirmed).
+- Safety audit: `artifacts/reports/sage_safety_audit.md` — all checks PASS.
+
+### Next Step
+
+Frame SAGE results as a cross-base generalization study in the manuscript:
+- CoVER-REL generalizes to SAGE on YelpChi with even larger relative lift than BWGNN.
+- Amazon Phase2 remains challenging for both bases (both show ~0 improvement at E0).
+- Do NOT deploy SAGE-Gate as a second main detector (mixed verdict does not meet "both datasets positive" criterion).

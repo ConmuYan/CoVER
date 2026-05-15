@@ -1,0 +1,26 @@
+{
+  "seed": 456,
+  "git_hash": "c221eeb",
+  "deterministic": true,
+  "config_path": "configs/yelpchi_sage.yaml",
+  "run_name": "base",
+  "model_name": "sage",
+  "dataset": "yelpchi",
+  "epochs_trained": 100,
+  "elapsed_seconds": 13.344677448272705,
+  "test_metrics": {
+    "roc_auc": 0.5207939618646719,
+    "auprc": 0.14762988115958087,
+    "f1": 0.0,
+    "macro_f1": 0.4608277358988649,
+    "precision": 0.0,
+    "recall": 0.0,
+    "g_means": 0.0,
+    "precision@50": 0.16,
+    "recall@50": 0.002995132909022838,
+    "precision@100": 0.12,
+    "recall@100": 0.004492699363534257,
+    "precision@200": 0.115,
+    "recall@200": 0.008611007113440658
+  }
+}

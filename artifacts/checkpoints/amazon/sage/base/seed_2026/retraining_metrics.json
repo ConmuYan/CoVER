@@ -1,0 +1,26 @@
+{
+  "seed": 2026,
+  "git_hash": "c221eeb",
+  "deterministic": true,
+  "config_path": "configs/amazon_sage.yaml",
+  "run_name": "base",
+  "model_name": "sage",
+  "dataset": "amazon",
+  "epochs_trained": 100,
+  "elapsed_seconds": 13.377576351165771,
+  "test_metrics": {
+    "roc_auc": 0.941330214132031,
+    "auprc": 0.841019904632198,
+    "f1": 0.8508474576271187,
+    "macro_f1": 0.9205173951828725,
+    "precision": 0.9616858237547893,
+    "recall": 0.7629179331306991,
+    "g_means": 0.8724697764444663,
+    "precision@50": 0.98,
+    "recall@50": 0.14893617021276595,
+    "precision@100": 0.98,
+    "recall@100": 0.2978723404255319,
+    "precision@200": 0.975,
+    "recall@200": 0.5927051671732523
+  }
+}

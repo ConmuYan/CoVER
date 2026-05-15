@@ -1,0 +1,93 @@
+{
+  "dataset": "amazon",
+  "dataset_path": "/data1/mq/codes/awesome-graph-anomaly-detection/cover-fd/datasets/Amazon.mat",
+  "model": "sage",
+  "num_nodes": 11944,
+  "prototype_labels": "train_only",
+  "rel_dim": 27,
+  "relation_descriptions": {
+    "UPU": "users reviewing at least one same product",
+    "USU": "users with at least one same star rating within one week",
+    "UVU": "users with top-5% TF-IDF review text similarity"
+  },
+  "relation_meta": {
+    "UPU": {
+      "benign_proto_dist_q33": 732.9825439453125,
+      "benign_proto_source": "train_relation_neighbor_mean",
+      "benign_proto_train_nodes": 3777,
+      "degree_q10": 0.0,
+      "degree_q90": 53.0,
+      "description": "users reviewing at least one same product",
+      "feature_deviation_q90": 1478.084805091266,
+      "fraud_proto_dist_q33": 681.07177734375,
+      "fraud_proto_source": "train_relation_neighbor_mean",
+      "fraud_proto_train_nodes": 272,
+      "mat_key": "net_upu",
+      "neighbor_cosine_q10": 0.029128107270255978,
+      "nodes_with_neighbors": 10224,
+      "z_threshold": 2.0
+    },
+    "USU": {
+      "benign_proto_dist_q33": 667.6163940429688,
+      "benign_proto_source": "train_relation_neighbor_mean",
+      "benign_proto_train_nodes": 4420,
+      "degree_q10": 31.0,
+      "degree_q90": 1685.699951171875,
+      "description": "users with at least one same star rating within one week",
+      "feature_deviation_q90": 1054.2644335962411,
+      "fraud_proto_dist_q33": 413.6658630371094,
+      "fraud_proto_source": "train_relation_neighbor_mean",
+      "fraud_proto_train_nodes": 327,
+      "mat_key": "net_usu",
+      "neighbor_cosine_q10": 0.03841908046714165,
+      "nodes_with_neighbors": 11854,
+      "z_threshold": 2.0
+    },
+    "UVU": {
+      "benign_proto_dist_q33": 1070.606689453125,
+      "benign_proto_source": "train_relation_neighbor_mean",
+      "benign_proto_train_nodes": 4428,
+      "degree_q10": 9.0,
+      "degree_q90": 411.70001220703125,
+      "description": "users with top-5% TF-IDF review text similarity",
+      "feature_deviation_q90": 1491.1762675504551,
+      "fraud_proto_dist_q33": 816.2111206054688,
+      "fraud_proto_source": "train_relation_neighbor_mean",
+      "fraud_proto_train_nodes": 317,
+      "mat_key": "net_uvu",
+      "neighbor_cosine_q10": 0.02500506783568255,
+      "nodes_with_neighbors": 11863,
+      "z_threshold": 2.0
+    }
+  },
+  "relation_schema": "amazon",
+  "relation_set": "all",
+  "relations": [
+    "UPU",
+    "USU",
+    "UVU"
+  ],
+  "score_blind": true,
+  "seed": 123,
+  "split_mode": "supervised",
+  "stat_names_per_relation": [
+    "log_degree_norm",
+    "degree_top10",
+    "degree_low",
+    "feature_l2_deviation_z",
+    "neighbor_cosine",
+    "zscore_high_fraction",
+    "fraud_proto_dist_z",
+    "benign_proto_dist_z",
+    "fraud_minus_benign_margin_z"
+  ],
+  "stratified": true,
+  "target_label_used": false,
+  "test_label_used": false,
+  "train_ratio": 0.4,
+  "val_label_used": false,
+  "val_test_ratio": [
+    1,
+    2
+  ]
+}
