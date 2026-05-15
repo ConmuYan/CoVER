@@ -1,0 +1,255 @@
+{
+  "config": {
+    "project": "cover_fd",
+    "dataset": {
+      "name": "yelpchi",
+      "path": "/data1/mq/codes/awesome-graph-anomaly-detection/cover-fd/datasets/YelpChi.mat",
+      "format": "mat",
+      "split_mode": "supervised",
+      "train_ratio": 0.4,
+      "val_test_ratio": [
+        1,
+        2
+      ],
+      "scarcity_ratio": 1.0,
+      "stratified": true
+    },
+    "model": {
+      "name": "sage",
+      "hidden_dim": 64,
+      "num_layers": 2,
+      "dropout": 0.5
+    },
+    "train": {
+      "seed": 0,
+      "epochs": 100,
+      "debug_epochs": 3,
+      "lr": 0.01,
+      "optimizer": "adam",
+      "weight_decay": 0.0005,
+      "patience": 100,
+      "device": "cuda:0",
+      "select_metric": "auprc"
+    },
+    "phase2_reasoner": {
+      "run_name": "phase2_yelp_confirm_lalign_1em2_standard",
+      "optimizer": "adamw",
+      "lr": 0.001,
+      "weight_decay": 0.0001,
+      "epochs": 300,
+      "patience": 50,
+      "early_stop_metric": "val_auprc",
+      "relation_names": [
+        "RUR",
+        "RSR",
+        "RTR"
+      ],
+      "anchor_relation": "RUR",
+      "rel_hidden_dim": 64,
+      "rel_num_layers": 2,
+      "rel_dropout": 0.3,
+      "tau_gate": 0.7,
+      "delta_rel_max": 2.0,
+      "use_judge": true,
+      "judge_hidden_dim": 32,
+      "judge_dropout": 0.3,
+      "alpha_max": 0.0,
+      "delta_llm_max": 0.75,
+      "alpha_bias_init": -3.0,
+      "eta_llm": 2.0,
+      "use_short_explanation_text": false,
+      "accept_only_verified_judge": true,
+      "lambda_trust": 0.003,
+      "lambda_sparse": 0.001,
+      "lambda_align": 0.01,
+      "eval_interval": 1
+    },
+    "eval": {
+      "k_values": [
+        50,
+        100,
+        200
+      ]
+    }
+  },
+  "phase2_reasoner": {
+    "run_name": "phase2_yelp_confirm_lalign_1em2_standard",
+    "optimizer": "adamw",
+    "lr": 0.001,
+    "weight_decay": 0.0001,
+    "epochs": 300,
+    "patience": 50,
+    "early_stop_metric": "val_auprc",
+    "relation_names": [
+      "RUR",
+      "RSR",
+      "RTR"
+    ],
+    "anchor_relation": "RUR",
+    "rel_hidden_dim": 64,
+    "rel_num_layers": 2,
+    "rel_dropout": 0.3,
+    "tau_gate": 0.7,
+    "delta_rel_max": 2.0,
+    "use_judge": true,
+    "judge_hidden_dim": 32,
+    "judge_dropout": 0.3,
+    "alpha_max": 0.0,
+    "delta_llm_max": 0.75,
+    "alpha_bias_init": -3.0,
+    "eta_llm": 2.0,
+    "use_short_explanation_text": false,
+    "accept_only_verified_judge": true,
+    "lambda_trust": 0.003,
+    "lambda_sparse": 0.001,
+    "lambda_align": 0.01,
+    "eval_interval": 1
+  },
+  "seed": 456,
+  "run_name": "phase2_yelp_confirm_lalign_1em2_standard",
+  "dataset": "yelpchi",
+  "model": "sage",
+  "device": {
+    "requested_device": "cuda:0",
+    "cuda_available": true,
+    "cuda_device_count": 1,
+    "cuda_visible_devices": "2",
+    "visible_device_index": 0,
+    "physical_device_id": "2",
+    "device_name": "NVIDIA GeForce RTX 3090"
+  },
+  "tensorboard": {
+    "enabled": true,
+    "path": "artifacts/tensorboard/phase2/yelpchi/sage/phase2_yelp_confirm_lalign_1em2_standard/seed_456"
+  },
+  "git_hash": "c770380",
+  "best_epoch": 278,
+  "best_val_score": 0.4157270042175415,
+  "early_stop_metric": "val_auprc",
+  "epochs_trained": 300,
+  "elapsed_seconds": 16.26926827430725,
+  "threshold": 0.65,
+  "test_metrics": {
+    "roc_auc": 0.8457435538740858,
+    "auprc": 0.422350735723642,
+    "f1": 0.5191426459719143,
+    "macro_f1": 0.7053528490368255,
+    "precision": 0.4289203712750366,
+    "recall": 0.6574316735305129,
+    "positive_prediction_rate": 0.22271787618322272,
+    "threshold_used": 0.65,
+    "g_means": 0.7480623888032839,
+    "precision@50": 0.42,
+    "recall@50": 0.00786222388618495,
+    "precision@100": 0.41,
+    "recall@100": 0.015350056158742045,
+    "precision@200": 0.455,
+    "recall@200": 0.03406963684013478
+  },
+  "final_diagnostics": {
+    "mean_abs_delta_rel": 1.5201292037963867,
+    "mean_alpha_llm": 0.0,
+    "mean_alpha_llm_accepted": 0.0,
+    "mean_alpha_llm_rejected": 0.0,
+    "max_abs_alpha_llm_rejected": 0.0,
+    "mean_gate_entropy": 0.3611712157726288,
+    "gate_weight_rel_0": 0.7293492555618286,
+    "gate_weight_rel_1": 0.15904562175273895,
+    "gate_weight_rel_2": 0.1116051971912384,
+    "mean_dominance_rho": 0.770847499370575
+  },
+  "relation_feature_meta": {
+    "relations": [
+      "RUR",
+      "RSR",
+      "RTR"
+    ],
+    "relation_descriptions": {
+      "RUR": "same user reviews",
+      "RSR": "same product same star rating reviews",
+      "RTR": "same product same month reviews"
+    },
+    "stat_names_per_relation": [
+      "log_degree_norm",
+      "degree_top10",
+      "degree_low",
+      "feature_l2_deviation_z",
+      "neighbor_cosine",
+      "zscore_high_fraction",
+      "fraud_proto_dist_z",
+      "benign_proto_dist_z",
+      "fraud_minus_benign_margin_z"
+    ],
+    "rel_dim": 27,
+    "num_nodes": 45954,
+    "score_blind": true,
+    "prototype_labels": "train_only",
+    "target_label_used": false,
+    "val_label_used": false,
+    "test_label_used": false,
+    "relation_meta": {
+      "RUR": {
+        "mat_key": "net_rur",
+        "description": "same user reviews",
+        "degree_q10": 0.0,
+        "degree_q90": 6.0,
+        "feature_deviation_q90": 2.210145110471274,
+        "neighbor_cosine_q10": 0.8480021863574645,
+        "fraud_proto_dist_q33": 1.4993613958358765,
+        "benign_proto_dist_q33": 1.4609653949737549,
+        "z_threshold": 2.0,
+        "nodes_with_neighbors": 23831,
+        "fraud_proto_train_nodes": 463,
+        "benign_proto_train_nodes": 9121,
+        "fraud_proto_source": "train_relation_neighbor_mean",
+        "benign_proto_source": "train_relation_neighbor_mean"
+      },
+      "RSR": {
+        "mat_key": "net_rsr",
+        "description": "same product same star rating reviews",
+        "degree_q10": 29.0,
+        "degree_q90": 270.0,
+        "feature_deviation_q90": 1.8324360738128702,
+        "neighbor_cosine_q10": 0.8890274969415938,
+        "fraud_proto_dist_q33": 1.4591933488845825,
+        "benign_proto_dist_q33": 1.458527684211731,
+        "z_threshold": 2.0,
+        "nodes_with_neighbors": 45914,
+        "fraud_proto_train_nodes": 2670,
+        "benign_proto_train_nodes": 15693,
+        "fraud_proto_source": "train_relation_neighbor_mean",
+        "benign_proto_source": "train_relation_neighbor_mean"
+      },
+      "RTR": {
+        "mat_key": "net_rtr",
+        "description": "same product same month reviews",
+        "degree_q10": 6.0,
+        "degree_q90": 46.0,
+        "feature_deviation_q90": 1.89153793991872,
+        "neighbor_cosine_q10": 0.8818741573143677,
+        "fraud_proto_dist_q33": 1.4594449996948242,
+        "benign_proto_dist_q33": 1.458571434020996,
+        "z_threshold": 2.0,
+        "nodes_with_neighbors": 45432,
+        "fraud_proto_train_nodes": 2639,
+        "benign_proto_train_nodes": 15522,
+        "fraud_proto_source": "train_relation_neighbor_mean",
+        "benign_proto_source": "train_relation_neighbor_mean"
+      }
+    },
+    "dataset": "yelpchi",
+    "model": "sage",
+    "seed": 456,
+    "dataset_path": "/data1/mq/codes/awesome-graph-anomaly-detection/cover-fd/datasets/YelpChi.mat",
+    "split_mode": "supervised",
+    "train_ratio": 0.4,
+    "val_test_ratio": [
+      1,
+      2
+    ],
+    "stratified": true,
+    "relation_set": "all",
+    "relation_schema": "yelpchi"
+  },
+  "num_accepted_judge": 40
+}
