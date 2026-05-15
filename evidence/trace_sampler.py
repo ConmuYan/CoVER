@@ -18,6 +18,7 @@ HARD CONSTRAINTS:
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +32,14 @@ DEFAULT_RATIOS = {
     "val_boundary": 0.15,
     "high_conf_fraud_candidate": 0.075,
     "high_conf_benign_candidate": 0.075,
+}
+
+COUNTER_FOCUSED_RATIOS = {
+    "train_base_fp": 0.35,
+    "train_benign_high_loss": 0.20,
+    "train_benign_dominant_payload": 0.20,
+    "high_base_prob_benign_train": 0.10,
+    "val_boundary_benign_like": 0.15,
 }
 
 
@@ -189,4 +198,199 @@ def sample_traces(
         with open(output_dir / "trace_sampling_stats.json", "w") as f:
             json.dump(stats, f, indent=2)
 
+    return trace_nodes, stats
+
+
+def _draw_from_pools(
+    pools: dict[str, list[int]],
+    ratios: dict[str, float],
+    trace_size: int,
+    rng: np.random.RandomState,
+) -> tuple[list[int], dict[str, int], dict[str, int], dict[str, list[int]]]:
+    trace_set: set[int] = set()
+    allocation: dict[str, int] = {}
+    actual_drawn: dict[str, list[int]] = {}
+
+    for pool_name, pool in pools.items():
+        n_alloc = max(0, round(trace_size * ratios.get(pool_name, 0.0)))
+        allocation[pool_name] = n_alloc
+        available = [n for n in pool if n not in trace_set]
+        rng.shuffle(available)
+        drawn = available[:n_alloc]
+        trace_set.update(drawn)
+        actual_drawn[pool_name] = drawn
+
+    remainder = trace_size - len(trace_set)
+    if remainder > 0:
+        fallback: list[int] = []
+        for pool in pools.values():
+            fallback.extend(pool)
+        available = [n for n in fallback if n not in trace_set]
+        rng.shuffle(available)
+        extra = available[:remainder]
+        trace_set.update(extra)
+        actual_drawn["_remainder"] = extra
+
+    return sorted(trace_set), allocation, {k: len(v) for k, v in actual_drawn.items()}, actual_drawn
+
+
+def build_counter_focused_candidates(
+    y: torch.Tensor,
+    train_mask: torch.Tensor,
+    val_mask: torch.Tensor,
+    base_logits: torch.Tensor,
+    trace_size: int,
+    seed: int,
+    oversample_factor: int = 5,
+) -> tuple[list[int], dict]:
+    """Build a score/label-based candidate set for later polarity filtering.
+
+    Uses train labels and base probabilities only for trace selection. It does
+    not inspect validation labels and never touches test nodes.
+    """
+    rng = np.random.RandomState(seed)
+    base_probs = torch.sigmoid(base_logits)
+    train_idx = train_mask.nonzero(as_tuple=True)[0]
+    val_idx = val_mask.nonzero(as_tuple=True)[0]
+    y_train = y[train_idx]
+    probs_train = base_probs[train_idx]
+
+    benign_train = train_idx[y_train == 0]
+    benign_probs = base_probs[benign_train]
+    train_losses = _bce_loss_per_node(base_logits[benign_train], torch.zeros_like(benign_probs))
+
+    fp_pool = train_idx[(y_train == 0) & (probs_train >= 0.5)].tolist()
+
+    if train_losses.numel() > 0:
+        loss_thresh = torch.quantile(train_losses, 0.75).item()
+        benign_high_loss_pool = benign_train[train_losses >= loss_thresh].tolist()
+    else:
+        benign_high_loss_pool = []
+
+    if benign_probs.numel() > 0:
+        high_prob_thresh = torch.quantile(benign_probs, 0.80).item()
+        high_prob_benign_pool = benign_train[benign_probs >= high_prob_thresh].tolist()
+    else:
+        high_prob_benign_pool = []
+
+    val_probs = base_probs[val_idx]
+    boundary_width = 0.20
+    val_boundary_pool = val_idx[(val_probs >= 0.5 - boundary_width) & (val_probs <= 0.5 + boundary_width)].tolist()
+
+    pools = {
+        "train_base_fp": fp_pool,
+        "train_benign_high_loss": benign_high_loss_pool,
+        "high_base_prob_benign_train": high_prob_benign_pool,
+        "val_boundary": val_boundary_pool,
+    }
+    candidate_size = max(trace_size, trace_size * oversample_factor)
+    candidate_ratios = {
+        "train_base_fp": 0.35,
+        "train_benign_high_loss": 0.25,
+        "high_base_prob_benign_train": 0.20,
+        "val_boundary": 0.20,
+    }
+    candidates, allocation, drawn_counts, drawn_nodes = _draw_from_pools(
+        pools, candidate_ratios, candidate_size, rng,
+    )
+    stats = {
+        "candidate_size_requested": candidate_size,
+        "candidate_size_actual": len(candidates),
+        "pool_sizes": {k: len(v) for k, v in pools.items()},
+        "candidate_pool_allocation": allocation,
+        "candidate_pool_drawn": drawn_counts,
+        "candidate_pool_drawn_nodes": drawn_nodes,
+        "test_labels_used": False,
+        "val_labels_used": False,
+        "train_labels_used_for": ["train_base_fp", "train_benign_high_loss", "high_base_prob_benign_train"],
+        "base_prob_used_for": [
+            "train_base_fp",
+            "train_benign_high_loss",
+            "high_base_prob_benign_train",
+            "val_boundary_boundary_only",
+        ],
+    }
+    return candidates, stats
+
+
+def sample_counter_focused_traces(
+    y: torch.Tensor,
+    train_mask: torch.Tensor,
+    val_mask: torch.Tensor,
+    base_logits: torch.Tensor,
+    trace_size: int,
+    seed: int,
+    polarity_by_node: dict[int, str],
+    candidate_nodes: list[int],
+    ratios: dict[str, float] | None = None,
+    output_dir: Path | None = None,
+    candidate_stats: dict | None = None,
+) -> tuple[list[int], dict]:
+    """Draw a counter-focused trace after card polarity is available."""
+    ratios = ratios or COUNTER_FOCUSED_RATIOS
+    rng = np.random.RandomState(seed)
+    candidate_set = set(candidate_nodes)
+    base_probs = torch.sigmoid(base_logits)
+    train_idx = [int(i) for i in train_mask.nonzero(as_tuple=True)[0].tolist() if int(i) in candidate_set]
+    val_idx = [int(i) for i in val_mask.nonzero(as_tuple=True)[0].tolist() if int(i) in candidate_set]
+
+    def is_benign_train(n: int) -> bool:
+        return bool(train_mask[n]) and int(y[n].item()) == 0
+
+    train_base_fp = [n for n in train_idx if is_benign_train(n) and base_probs[n].item() >= 0.5]
+
+    benign_train = [n for n in train_idx if is_benign_train(n)]
+    if benign_train:
+        losses = _bce_loss_per_node(base_logits[benign_train], torch.zeros(len(benign_train)))
+        thresh = torch.quantile(losses, 0.75).item()
+        train_benign_high_loss = [n for n, loss in zip(benign_train, losses.tolist()) if loss >= thresh]
+        probs = base_probs[benign_train]
+        prob_thresh = torch.quantile(probs, 0.80).item()
+        high_base_prob_benign_train = [n for n in benign_train if base_probs[n].item() >= prob_thresh]
+    else:
+        train_benign_high_loss = []
+        high_base_prob_benign_train = []
+
+    train_benign_dominant_payload = [
+        n for n in benign_train
+        if polarity_by_node.get(n) == "benign_dominant"
+    ]
+
+    val_boundary_benign_like = [
+        n for n in val_idx
+        if 0.30 <= base_probs[n].item() <= 0.70
+        and polarity_by_node.get(n) in ("benign_dominant", "mixed")
+    ]
+
+    pools = {
+        "train_base_fp": train_base_fp,
+        "train_benign_high_loss": train_benign_high_loss,
+        "train_benign_dominant_payload": train_benign_dominant_payload,
+        "high_base_prob_benign_train": high_base_prob_benign_train,
+        "val_boundary_benign_like": val_boundary_benign_like,
+    }
+    trace_nodes, allocation, drawn_counts, drawn_nodes = _draw_from_pools(pools, ratios, trace_size, rng)
+    stats = {
+        "trace_sampler_mode": "counter_focused",
+        "trace_size_requested": trace_size,
+        "trace_size_actual": len(trace_nodes),
+        "seed": seed,
+        "ratios_used": ratios,
+        "pool_sizes": {k: len(v) for k, v in pools.items()},
+        "pool_allocation": allocation,
+        "pool_drawn": drawn_counts,
+        "pool_drawn_nodes": drawn_nodes,
+        "candidate_stats": candidate_stats or {},
+        "payload_polarity_counts": dict(Counter(polarity_by_node.get(n, "unknown") for n in candidate_nodes)),
+        "test_labels_used": False,
+        "val_labels_used": False,
+        "train_labels_used_for": ["train_base_fp", "train_benign_high_loss", "train_benign_dominant_payload", "high_base_prob_benign_train"],
+        "base_prob_used_for": ["trace_selection_only_not_teacher_payload"],
+        "payload_polarity_used_for": ["train_benign_dominant_payload", "val_boundary_benign_like"],
+    }
+    if output_dir is not None:
+        from utils.paths import ensure_dir
+        ensure_dir(output_dir)
+        with open(output_dir / "trace_sampling_stats.json", "w") as f:
+            json.dump(stats, f, indent=2)
     return trace_nodes, stats

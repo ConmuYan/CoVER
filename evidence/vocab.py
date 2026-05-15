@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from evidence.schema import ERR, ReasoningChannel
+from evidence.schema import ERR
 
 EVIDENCE_SLOTS = [
     "degree_level",
@@ -27,6 +27,19 @@ EVIDENCE_SLOTS = [
     "prototype_conflict_level",
 ]
 
+RELATION_TOKEN_PREFIXES = ("RUR", "RSR", "RTR", "UPU", "USU", "UVU")
+RELATION_FRAUD_SUFFIXES = (
+    "DEGREE_TOP10",
+    "FEATURE_DEVIATION_HIGH",
+    "NEIGHBOR_CONSISTENCY_LOW",
+    "FRAUD_PROTO_CLOSE",
+    "ZSCORE_HIGH_COUNT",
+)
+RELATION_BENIGN_SUFFIXES = (
+    "DEGREE_LOW",
+    "BENIGN_PROTO_CLOSE",
+)
+
 TOKEN_POLARITY_FRAUD = frozenset({
     "HF_RATIO_TOP10",
     "HF_RATIO_HIGH",
@@ -41,6 +54,11 @@ TOKEN_POLARITY_FRAUD = frozenset({
     "INTERFERING_EDGE_RATIO_HIGH",
     "CLEAN_VIEW_SHIFT_HIGH",
     "RAW_TO_CLEAN_CONFLICT",
+    "ANON_FEATURE_RELATION_ZSCORE_HIGH",
+} | {
+    f"{prefix}_{suffix}"
+    for prefix in RELATION_TOKEN_PREFIXES
+    for suffix in RELATION_FRAUD_SUFFIXES
 })
 
 TOKEN_POLARITY_BENIGN = frozenset({
@@ -56,12 +74,17 @@ TOKEN_POLARITY_BENIGN = frozenset({
     "FEATURE_EMBED_AGREE_HIGH",
     "TWO_HOP_CONSISTENCY_HIGH",
     "LOW_HIGH_BAND_MATCH",
+} | {
+    f"{prefix}_{suffix}"
+    for prefix in RELATION_TOKEN_PREFIXES
+    for suffix in RELATION_BENIGN_SUFFIXES
 })
 
 TOKEN_POLARITY_NEUTRAL = frozenset({
     "PROTO_CONFLICT_HIGH",
     "LOCAL_CURVATURE_OUTLIER_HIGH",
     "EDGE_CURVATURE_VAR_HIGH",
+    "RELATION_PROTO_CONFLICT_HIGH",
 })
 
 TOKEN_POLARITY_MAP: dict[str, str] = {}

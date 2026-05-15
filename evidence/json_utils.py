@@ -48,11 +48,12 @@ def parse_llm_err(raw_output: str, node_id: int) -> ERR:
     )
 
     import dataclasses
-    if dataclasses.is_dataclass(ERR) and hasattr(ERR, "evidence_direction"):
+    _field_names = {f.name for f in dataclasses.fields(ERR)}
+    if "evidence_direction" in _field_names:
         err_kwargs["evidence_direction"] = evidence_direction
-    if dataclasses.is_dataclass(ERR) and hasattr(ERR, "evidence_strength"):
+    if "evidence_strength" in _field_names:
         err_kwargs["evidence_strength"] = evidence_strength
-    if dataclasses.is_dataclass(ERR) and hasattr(ERR, "uncertainty_factors"):
+    if "uncertainty_factors" in _field_names:
         err_kwargs["uncertainty_factors"] = [
             f for f in uncertainty_factors if isinstance(f, str)
         ]

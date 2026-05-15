@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import torch
-import pytest
 
 from evidence.vocab import (
     TOKEN_POLARITY_FRAUD,
@@ -20,16 +19,16 @@ from evidence.adapter import EvidenceAdapter, compute_prototype_similarity
 
 class TestTokenPolarity:
     def test_fraud_polarity_count(self):
-        assert len(TOKEN_POLARITY_FRAUD) == 13
+        assert len(TOKEN_POLARITY_FRAUD) == 44
 
     def test_benign_polarity_count(self):
-        assert len(TOKEN_POLARITY_BENIGN) == 12
+        assert len(TOKEN_POLARITY_BENIGN) == 24
 
     def test_neutral_polarity_count(self):
-        assert len(TOKEN_POLARITY_NEUTRAL) == 3
+        assert len(TOKEN_POLARITY_NEUTRAL) == 4
 
     def test_polarity_map_complete(self):
-        assert len(TOKEN_POLARITY_MAP) == 28
+        assert len(TOKEN_POLARITY_MAP) == 72
         all_tokens = TOKEN_POLARITY_FRAUD | TOKEN_POLARITY_BENIGN | TOKEN_POLARITY_NEUTRAL
         for t in all_tokens:
             assert t in TOKEN_POLARITY_MAP
@@ -40,9 +39,18 @@ class TestTokenPolarity:
         assert TOKEN_POLARITY_BENIGN & TOKEN_POLARITY_NEUTRAL == set()
 
     def test_graph_tokens_covers_all(self):
-        assert len(GRAPH_EVIDENCE_TOKENS) == 28
+        assert len(GRAPH_EVIDENCE_TOKENS) == 72
         all_tokens = TOKEN_POLARITY_FRAUD | TOKEN_POLARITY_BENIGN | TOKEN_POLARITY_NEUTRAL
         assert set(GRAPH_EVIDENCE_TOKENS) == all_tokens
+
+    def test_relation_tokens_registered(self):
+        assert "RUR_FEATURE_DEVIATION_HIGH" in TOKEN_POLARITY_FRAUD
+        assert "RSR_NEIGHBOR_CONSISTENCY_LOW" in TOKEN_POLARITY_FRAUD
+        assert "RTR_BENIGN_PROTO_CLOSE" in TOKEN_POLARITY_BENIGN
+        assert "UPU_FEATURE_DEVIATION_HIGH" in TOKEN_POLARITY_FRAUD
+        assert "USU_NEIGHBOR_CONSISTENCY_LOW" in TOKEN_POLARITY_FRAUD
+        assert "UVU_BENIGN_PROTO_CLOSE" in TOKEN_POLARITY_BENIGN
+        assert "RELATION_PROTO_CONFLICT_HIGH" in TOKEN_POLARITY_NEUTRAL
 
 
 # ── TestBenignTokenGeneration ──────────────────────────────────

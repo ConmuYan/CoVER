@@ -1,4 +1,3 @@
-import pytest
 import torch
 import sys
 from pathlib import Path
@@ -45,6 +44,7 @@ def test_safe_residual_gate_non_negative():
 
 
 def test_legacy_gate_can_be_negative():
+    torch.manual_seed(0)
     z, base_logit, evi_ids = _make_inputs()
     reasoner = EvidenceReasoner(z_dim=64, gate_mode="signed_diff_legacy")
     outputs = reasoner(z, base_logit, evi_ids, return_debug=True)

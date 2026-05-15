@@ -11,12 +11,21 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data.load_fraud import load_fraud_dataset
+from evidence.relation_features import load_relation_stats
 from evidence.vocab import encode_reasoning, get_evidence_slots, get_reason_types
 from models.gnn import build_detector
 from models.reasoner import EvidenceReasoner, VALID_GATE_MODES
 from training.metrics import compute_metrics, compute_metrics_with_threshold
-from utils.paths import get_checkpoint_dir, get_results_dir, get_err_cache_dir, get_base_checkpoint_path, get_reasoner_checkpoint_path, ensure_dir
+from utils.paths import get_results_dir, get_err_cache_dir, get_base_checkpoint_path, get_reasoner_checkpoint_path, ensure_dir
 from utils.threshold import find_best_threshold, evaluate_with_threshold
+
+
+def _relation_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).upper() for item in value if str(item).strip()]
+    return [item.strip().upper() for item in str(value).split(",") if item.strip()]
 
 
 def load_evidence_cards(path: Path) -> dict[int, dict]:
@@ -28,6 +37,26 @@ def load_evidence_cards(path: Path) -> dict[int, dict]:
             card = json.loads(line)
             cards[card["node_id"]] = card
     return cards
+
+
+def _load_evidence_cards_from_runs(dataset_name: str, model_name: str, run_names: list[str], seed: int) -> dict[int, dict]:
+    cards: dict[int, dict] = {}
+    for run_name in run_names:
+        err_cache_dir = get_err_cache_dir(dataset_name, model_name, run_name, seed)
+        cards.update(load_evidence_cards(err_cache_dir / "evidence_cards.jsonl"))
+    return cards
+
+
+def _load_stage3_run_config(dataset_name: str, model_name: str, run_name: str, seed: int) -> dict:
+    stage3_log_path = Path("artifacts") / "logs" / dataset_name / model_name / run_name / f"seed_{seed}" / "stage3.json"
+    if not stage3_log_path.exists():
+        return {}
+    with open(stage3_log_path) as f:
+        return json.load(f)
+
+
+def _default_relation_feature_path(dataset_name: str, model_name: str, seed: int, relation_set: str = "all") -> Path:
+    return Path("artifacts") / "relation_features" / dataset_name / model_name / f"seed_{seed}" / relation_set / "rel_stats.pt"
 
 
 def _run_threshold_calibration(
@@ -86,7 +115,10 @@ def main():
     run_name = args.run_name
 
     torch.manual_seed(seed)
-    device = torch.device(config["train"].get("device", "cuda" if torch.cuda.is_available() else "cpu"))
+    requested_device = str(config["train"].get("device", "cuda" if torch.cuda.is_available() else "cpu"))
+    if requested_device.startswith("cuda") and not torch.cuda.is_available():
+        requested_device = "cpu"
+    device = torch.device(requested_device)
 
     if args.debug:
         print("[DEBUG] Using tiny synthetic graph")
@@ -156,10 +188,10 @@ def main():
             print(f"\n=== Stage 1 Threshold Calibration ({args.threshold_mode}) ===")
             print(f"  Best threshold: {calibration['best_threshold']:.4f}")
             print(f"  Best val {calibration['calibration_metric']}: {calibration['best_val_metric_score']:.4f}")
-            print(f"\n  Validation metrics:")
+            print("\n  Validation metrics:")
             for k, v in calibration["val"].items():
                 print(f"    {k}: {v:.4f}")
-            print(f"\n  Test metrics:")
+            print("\n  Test metrics:")
             for k, v in calibration["test"].items():
                 print(f"    {k}: {v:.4f}")
 
@@ -198,7 +230,8 @@ def main():
             print(f"Error: Reasoner checkpoint not found at {reasoner_path}")
             sys.exit(1)
 
-        rc = config.get("reasoner", {})
+        run_info = _load_stage3_run_config(dataset_name, model_name, run_name, seed)
+        rc = run_info.get("config", config).get("reasoner", config.get("reasoner", {}))
         gate_mode = args.gate_mode or rc.get("gate_mode", "safe_residual")
         delta_scale = args.delta_scale or rc.get("delta_scale", 2.0)
 
@@ -210,14 +243,31 @@ def main():
             delta_scale=delta_scale,
             gate_bias_init=rc.get("gate_bias_init", -2.0),
             residual_init_zero=rc.get("residual_init_zero", True),
+            latent_dim=rc.get("latent_dim", 256),
+            relation_dim=rc.get("relation_dim", 0),
+            relation_hidden_dim=rc.get("relation_hidden_dim", 32),
+            relation_fusion_mode=rc.get("relation_fusion_mode", "concat"),
+            relation_names=_relation_list(rc.get("relation_names")),
+            relation_stat_dim=rc.get("relation_stat_dim"),
+            anchor_relation=rc.get("anchor_relation"),
+            optional_relations=_relation_list(rc.get("optional_relations")),
+            relation_dropout=0.0,
+            gate_hidden_dim=rc.get("gate_hidden_dim", 64),
+            gate_temperature=rc.get("gate_temperature", 1.0),
+            use_llm_judge=rc.get("use_llm_judge", False),
+            judge_feature_dim=rc.get("judge_feature_dim", 0),
+            fusion_mode=rc.get("fusion_mode", "none"),
+            llm_delta_scale=rc.get("llm_delta_scale", 1.0),
+            alpha_max=rc.get("alpha_max", 1.0),
+            strength_aware_alpha=rc.get("strength_aware_alpha", False),
         ).to(device)
 
-        state = torch.load(reasoner_path, weights_only=True)
-        reasoner.load_state_dict(state)
+        state = torch.load(reasoner_path, weights_only=False)
+        reasoner.load_state_dict(state, strict=False)
         reasoner.eval()
 
-        err_cache_dir = get_err_cache_dir(dataset_name, model_name, run_name, seed)
-        cards = load_evidence_cards(err_cache_dir / "evidence_cards.jsonl")
+        stage2_run_names = run_info.get("source_stage2_run_names", [run_info.get("source_stage2_run_name", run_name)])
+        cards = _load_evidence_cards_from_runs(dataset_name, model_name, stage2_run_names, seed)
 
         num_slots = len(get_evidence_slots())
         num_nodes = data.x.shape[0]
@@ -228,12 +278,33 @@ def main():
                 evidence_token_ids[node_id] = encode_reasoning(reasoning)
 
         evidence_token_ids = evidence_token_ids.to(device)
+        relation_features = None
+        if rc.get("use_relation_features", False):
+            rel_path = rc.get("relation_features_path")
+            if rel_path is None:
+                rel_path = str(_default_relation_feature_path(
+                    dataset_name,
+                    model_name,
+                    seed,
+                    rc.get("relation_set", "all"),
+                ))
+            relation_features, _ = load_relation_stats(Path(str(rel_path)), num_nodes=num_nodes)
+            relation_features = relation_features.to(device)
+        judge_features = None
+        judge_mask = None
+        if rc.get("use_llm_judge", False) and rc.get("judge_features_path"):
+            payload = torch.load(Path(str(rc["judge_features_path"])), map_location="cpu", weights_only=False)
+            judge_features = payload["features"].float().to(device)
+            judge_mask = payload["mask"].bool().to(device)
 
         with torch.no_grad():
             outputs_test = reasoner(
                 z[test_mask],
                 base_logits[test_mask],
                 evidence_token_ids[test_mask],
+                relation_features=relation_features[test_mask] if relation_features is not None else None,
+                judge_features=judge_features[test_mask] if judge_features is not None else None,
+                judge_mask=judge_mask[test_mask] if judge_mask is not None else None,
             )
 
         prob_test = torch.sigmoid(outputs_test["final_logit"]).cpu().numpy()
@@ -270,6 +341,9 @@ def main():
                     z[val_mask],
                     base_logits[val_mask],
                     evidence_token_ids[val_mask],
+                    relation_features=relation_features[val_mask] if relation_features is not None else None,
+                    judge_features=judge_features[val_mask] if judge_features is not None else None,
+                    judge_mask=judge_mask[val_mask] if judge_mask is not None else None,
                 )
 
             prob_val = torch.sigmoid(outputs_val["final_logit"]).cpu().numpy()
@@ -282,10 +356,10 @@ def main():
             print(f"\n=== Stage 3 Threshold Calibration ({args.threshold_mode}) ===")
             print(f"  Best threshold: {calibration['best_threshold']:.4f}")
             print(f"  Best val {calibration['calibration_metric']}: {calibration['best_val_metric_score']:.4f}")
-            print(f"\n  Validation metrics:")
+            print("\n  Validation metrics:")
             for k, v in calibration["val"].items():
                 print(f"    {k}: {v:.4f}")
-            print(f"\n  Test metrics:")
+            print("\n  Test metrics:")
             for k, v in calibration["test"].items():
                 print(f"    {k}: {v:.4f}")
 
@@ -309,7 +383,6 @@ def main():
                 y_val_np, prob_val, metric=other_metric_key,
             )
             other_test_metrics = evaluate_with_threshold(y_test_np, prob_test, other_threshold)
-            other_val_metrics = evaluate_with_threshold(y_val_np, prob_val, other_threshold)
             calibrated_result[f"{other_mode}_threshold_metrics"] = other_test_metrics
 
             calibrated_path = results_dir / "stage3_calibrated_metrics.json"

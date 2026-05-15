@@ -221,27 +221,56 @@ def build_contrastive_directional_messages(
         "3. Choose decrease_risk when benign-like / normal-structure / counter evidence dominates, "
         "even if minor anomaly evidence exists.\n"
         "4. Choose uncertain when both sides are mixed.\n\n"
+        "=== Risk Type Selection Rules ===\n"
+        "You MUST check the actual field values in Target Node Reasoning Fields BEFORE choosing a risk_type.\n"
+        "A risk_type is ONLY valid if its required conditions are met by the actual values.\n\n"
+        "- structural_discrepancy: ONLY if degree_level=high OR neighbor_consistency=low "
+        "OR detector_signal indicates discrepancy. NEVER for decrease_risk.\n"
+        "- camouflage_neighbor: ONLY if neighbor_consistency=low. "
+        "NEVER if neighbor_consistency=high.\n"
+        "- spectral_anomaly: ONLY if detector_signal_strength is NOT weak AND detector_signal "
+        "indicates spectral/frequency anomaly. NEVER if detector_signal_strength=weak.\n"
+        "- feature_structure_conflict: ONLY if feature_neighbor_discrepancy=high. "
+        "NEVER if feature_neighbor_discrepancy=low.\n"
+        "- relation_or_burst_anomaly: ONLY if degree_level=high.\n"
+        "- weak_or_uncertain_evidence: Use when evidence is weak, mixed, conflicting, "
+        "OR when no other risk_type conditions are met. This is the SAFE DEFAULT.\n\n"
+        "CRITICAL: For decrease_risk direction, prefer weak_or_uncertain_evidence.\n"
+        "Do NOT choose a risk_type whose conditions are not satisfied by the actual field values.\n\n"
         "=== Synthetic Examples ===\n"
         "Example 1 (fraud-like → increase_risk):\n"
+        '  "risk_type": "structural_discrepancy",\n'
         '  "supporting_evidence": ["degree_level", "detector_signal", "feature_neighbor_discrepancy"],\n'
         '  "counter_evidence": [],\n'
+        '  "uncertainty_factors": [],\n'
         '  "evidence_direction": "increase_risk",\n'
         '  "reasoning": "High degree, strong detector signal, and feature-neighbor discrepancy all align with fraud prototype. No benign-like counter-evidence present."\n\n'
         "Example 2 (benign-like → decrease_risk):\n"
+        '  "risk_type": "weak_or_uncertain_evidence",\n'
         '  "supporting_evidence": [],\n'
         '  "counter_evidence": ["degree_level", "neighbor_consistency"],\n'
+        '  "uncertainty_factors": ["evidence_polarity"],\n'
         '  "evidence_direction": "decrease_risk",\n'
         '  "reasoning": "Degree level and neighbor consistency match benign prototype. No fraud-like anomaly evidence present."\n\n'
         "Example 3 (mixed → uncertain):\n"
+        '  "risk_type": "weak_or_uncertain_evidence",\n'
         '  "supporting_evidence": ["detector_signal"],\n'
         '  "counter_evidence": ["neighbor_consistency"],\n'
+        '  "uncertainty_factors": ["detector_signal_strength", "evidence_polarity"],\n'
         '  "evidence_direction": "uncertain",\n'
         '  "reasoning": "Detector signal suggests fraud, but neighbor consistency suggests benign. Signals are mixed and neither side dominates."\n\n'
         "=== Rules ===\n"
         "- Compare the target node against both prototypes to determine direction.\n"
         "- supporting_evidence can only cite fields from allowed_support_ids.\n"
         "- counter_evidence can only cite fields from allowed_counter_ids.\n"
-        "- Each uncertainty_factor must reference an available reasoning field.\n"
+        "- If a field is not in allowed_counter_ids, NEVER put it in counter_evidence; "
+        "put mixed or conflicting non-counter fields in uncertainty_factors instead.\n"
+        "- evidence_polarity is a directional diagnostic. Do NOT cite evidence_polarity "
+        "as supporting_evidence or counter_evidence unless it is explicitly listed in the "
+        "corresponding allowed list. You may use it as an uncertainty_factor.\n"
+        "- supporting_evidence and counter_evidence must NOT overlap (no field in both).\n"
+        "- Each uncertainty_factor must be a FIELD NAME from the reasoning fields (e.g. \"detector_signal_strength\"). "
+        "Do NOT write sentences or descriptions — only bare field names.\n"
         "- Do not mention score, probability, confidence, logit, base_score, or model prediction.\n"
         "- Output exactly one JSON object and nothing else.\n"
         "- summary must be one sentence without scores.\n\n"
@@ -282,7 +311,6 @@ def build_contrastive_directional_retry_messages(
             "risk_type": previous_err.risk_type,
             "supporting_evidence": previous_err.supporting_evidence,
             "counter_evidence": previous_err.counter_evidence,
-            "summary": previous_err.summary,
         }
         if hasattr(previous_err, "evidence_direction"):
             prev_dict["evidence_direction"] = getattr(previous_err, "evidence_direction", "uncertain")
@@ -299,6 +327,13 @@ def build_contrastive_directional_retry_messages(
         direction_hint += "\nevidence_strength must be one of: weak, moderate, strong"
     if "direction_consistency" in reject_reasons:
         direction_hint += "\nCheck that your evidence_direction is consistent with your evidence lists."
+    if "invalid_support_role" in reject_reasons:
+        direction_hint += "\nsupporting_evidence must only contain fields from allowed_support_ids."
+    if "invalid_counter_role" in reject_reasons:
+        direction_hint += (
+            "\ncounter_evidence must only contain fields from allowed_counter_ids. "
+            "Move other mixed fields to uncertainty_factors."
+        )
 
     retry_content = (
         f"Your previous output was rejected by the verifier.\n"

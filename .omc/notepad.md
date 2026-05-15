@@ -3,7 +3,7 @@
 
 ## Priority Context
 <!-- ALWAYS loaded. Keep under 500 chars. Critical discoveries only. -->
-Task 8.1 Complete: Qwen teacher adds no value over Rule teacher (Δ ROC-AUC: +0.0000, Δ F1: +0.0001). Both reasoners hurt F1 (Rule: -0.1483, Qwen: -0.1387). Issue is in reasoner architecture/training, not teacher quality. Next: investigate F1 regression root cause.
+Task 8.7.4b DONE: Stage2 directional t200 all 5 seeds (42,123,456,789,2026). Mean acceptance=96.9%. Score-blind OK, no corruption. Next: Stage3 CV-SCD-DIR training → final CoVER-DIR vs BWGNN comparison.
 
 ## Working Memory
 <!-- Session notes. Auto-pruned after 7 days. -->

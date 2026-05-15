@@ -113,3 +113,41 @@ class TestEndToEnd:
 
         assert not torch.isnan(loss)
         assert stats["direction_ce_loss"] > 0
+
+
+def test_stage3_prepare_targets_encodes_direction_without_summary():
+    from scripts.train_stage3 import prepare_targets
+
+    num_slots = len(get_evidence_slots())
+    targets = prepare_targets(
+        num_nodes=3,
+        accepted_errs=[
+            {
+                "node_id": 1,
+                "risk_type": "weak_or_uncertain_evidence",
+                "supporting_evidence": [],
+                "counter_evidence": ["counter_signal"],
+                "summary": "this text must not affect target encoding",
+                "evidence_direction": "decrease_risk",
+                "evidence_strength": "moderate",
+            }
+        ],
+        evidence_cards={
+            1: {
+                "node_id": 1,
+                "reasoning": {
+                    "degree_level": "low",
+                    "neighbor_consistency": "high",
+                    "feature_neighbor_discrepancy": "low",
+                    "detector_signal": "weak",
+                    "detector_signal_strength": "weak",
+                    "counter_signal": "strong",
+                },
+            }
+        },
+        train_mask=torch.tensor([True, True, False]),
+    )
+
+    assert targets["accepted_mask"].tolist() == [0.0, 1.0, 0.0]
+    assert targets["direction_id"].tolist() == [-1, 1, -1]
+    assert targets["evidence_token_ids"].shape == (3, num_slots)

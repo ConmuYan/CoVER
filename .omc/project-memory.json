@@ -1,10 +1,181 @@
 {
-  "techStack": "Python, PyTorch, PyG (PyTorch Geometric), YAML, JSON",
-  "build": "pytest -q for tests, python scripts/ for experiments",
-  "conventions": "Simple PyTorch/PyG code, no unnecessary abstraction, type hints, deterministic seeds",
-  "structure": "cover-fd/: configs/, data/, models/, evidence/, training/, scripts/, tests/, artifacts/",
-  "notes": "Task 8.1 complete. Qwen teacher adds no value over Rule teacher. Both reasoners hurt F1. Issue in reasoner architecture, not teacher quality.",
   "version": "1.0.0",
-  "lastScanned": 1778609737647,
-  "projectRoot": "/data1/mq/codes/awesome-graph-anomaly-detection/cover-fd"
+  "lastScanned": 1778739124548,
+  "projectRoot": "/data1/mq/codes/awesome-graph-anomaly-detection/cover-fd",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "requirements.txt"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "pip",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "scripts",
+      "tests"
+    ],
+    "gitBranches": null
+  },
+  "directoryMap": {
+    "artifacts": {
+      "path": "artifacts",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1778739124541,
+      "keyFiles": []
+    },
+    "configs": {
+      "path": "configs",
+      "purpose": null,
+      "fileCount": 6,
+      "lastAccessed": 1778739124542,
+      "keyFiles": [
+        "ablation.yaml",
+        "amazon_bwgnn.yaml",
+        "yelpchi_bwgnn.yaml",
+        "yelpchi_gat.yaml",
+        "yelpchi_gcn.yaml"
+      ]
+    },
+    "data": {
+      "path": "data",
+      "purpose": "Data files",
+      "fileCount": 3,
+      "lastAccessed": 1778739124544,
+      "keyFiles": [
+        "__init__.py",
+        "load_fraud.py",
+        "split.py"
+      ]
+    },
+    "datasets": {
+      "path": "datasets",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1778739124545,
+      "keyFiles": [
+        "Amazon.mat",
+        "YelpChi.mat"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 6,
+      "lastAccessed": 1778739124545,
+      "keyFiles": [
+        "alignment.md",
+        "bwgnn_integration_notes.md",
+        "cover_guide.md",
+        "cover_main.md",
+        "repo_understanding_report.md"
+      ]
+    },
+    "evidence": {
+      "path": "evidence",
+      "purpose": null,
+      "fileCount": 14,
+      "lastAccessed": 1778739124545,
+      "keyFiles": [
+        "__init__.py",
+        "adapter.py",
+        "contract_hints.py",
+        "contracts.yaml",
+        "json_utils.py"
+      ]
+    },
+    "external": {
+      "path": "external",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1778739124546,
+      "keyFiles": []
+    },
+    "models": {
+      "path": "models",
+      "purpose": "Data models",
+      "fileCount": 5,
+      "lastAccessed": 1778739124546,
+      "keyFiles": [
+        "__init__.py",
+        "base.py",
+        "bwgnn.py",
+        "gnn.py",
+        "reasoner.py"
+      ]
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 26,
+      "lastAccessed": 1778739124546,
+      "keyFiles": [
+        "aggregate_results.py",
+        "aggregate_sweep_results.py",
+        "analyze_verifier_rejections.py",
+        "audit_all_splits.py",
+        "audit_fresh_stage1.py"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 34,
+      "lastAccessed": 1778739124547,
+      "keyFiles": [
+        "test_base_model_output.py",
+        "test_bwgnn.py",
+        "test_bwgnn_adapter.py",
+        "test_contract_hints.py",
+        "test_cvscd_loss.py"
+      ]
+    },
+    "training": {
+      "path": "training",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1778739124547,
+      "keyFiles": [
+        "__init__.py",
+        "losses.py",
+        "metrics.py"
+      ]
+    },
+    "utils": {
+      "path": "utils",
+      "purpose": "Utility functions",
+      "fileCount": 4,
+      "lastAccessed": 1778739124547,
+      "keyFiles": [
+        "gpu.py",
+        "paths.py",
+        "tensorboard.py",
+        "threshold.py"
+      ]
+    }
+  }
 }

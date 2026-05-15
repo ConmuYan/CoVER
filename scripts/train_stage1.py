@@ -17,7 +17,7 @@ from data.load_fraud import load_fraud_dataset
 from models.gnn import build_detector
 from training.metrics import compute_metrics
 from utils.tensorboard import create_logger
-from utils.paths import get_checkpoint_dir, get_logs_dir, get_results_dir, get_split_path, get_split_meta_path, ensure_dir
+from utils.paths import get_checkpoint_dir, get_logs_dir, get_results_dir, ensure_dir
 
 
 def get_git_hash() -> str:
@@ -90,9 +90,10 @@ def main():
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
 
-    device = torch.device(
-        config["train"].get("device", "cuda" if torch.cuda.is_available() else "cpu")
-    )
+    requested_device = str(config["train"].get("device", "cuda" if torch.cuda.is_available() else "cpu"))
+    if requested_device.startswith("cuda") and not torch.cuda.is_available():
+        requested_device = "cpu"
+    device = torch.device(requested_device)
 
     if args.debug:
         print("[DEBUG] Using tiny synthetic graph, 3 epochs")

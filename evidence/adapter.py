@@ -133,6 +133,8 @@ class EvidenceAdapter:
         self.num_nodes = x.shape[0]
 
         self.degrees = self._compute_degrees()
+        self._neighbor_lists: list[list[int]] | None = None
+        self._neighbor_tensors: list[Tensor] | None = None
         self._precomputed = False
         self._neighbor_emb_mean: Tensor | None = None
         self._neighbor_feat_mean: Tensor | None = None
@@ -145,11 +147,27 @@ class EvidenceAdapter:
         degree.scatter_add_(0, row, ones)
         return degree
 
+    def _ensure_neighbor_lists(self) -> None:
+        if self._neighbor_lists is not None and self._neighbor_tensors is not None:
+            return
+        row, col = self.edge_index
+        neighbors: list[list[int]] = [[] for _ in range(self.num_nodes)]
+        for src, dst in zip(row.tolist(), col.tolist()):
+            neighbors[src].append(dst)
+        self._neighbor_lists = neighbors
+        self._neighbor_tensors = [torch.tensor(n, dtype=torch.long) for n in neighbors]
+
+    def _neighbors_for(self, node_id: int) -> list[int]:
+        self._ensure_neighbor_lists()
+        assert self._neighbor_lists is not None
+        return self._neighbor_lists[node_id]
+
     def _precompute_global(self, embeddings: Tensor, base_logits: Tensor) -> None:
         """Pre-compute all global statistics once (vectorized)."""
         if self._precomputed:
             return
 
+        self._ensure_neighbor_lists()
         row, col = self.edge_index
 
         # Neighbor count per node
@@ -202,6 +220,13 @@ class EvidenceAdapter:
         self._nd_std = nd_var.clamp(min=0).sqrt()
         self._nd_skew = torch.where(self._nd_mean > 0, self._nd_std / self._nd_mean, torch.zeros(self.num_nodes))
 
+        # Quantiles reused by card extraction and graph-token generation.
+        self._feat_cos_q10 = torch.quantile(self._feat_cos, 0.10).item()
+        self._feat_cos_q90 = torch.quantile(self._feat_cos, 0.90).item()
+        self._emb_cos_q10 = torch.quantile(self._emb_cos, 0.10).item()
+        self._emb_cos_q90 = torch.quantile(self._emb_cos, 0.90).item()
+        self._neighbor_logit_std_q10 = torch.quantile(self._neighbor_logit_std, 0.10).item()
+
         self._precomputed = True
 
     def extract_batch(
@@ -211,11 +236,21 @@ class EvidenceAdapter:
         embeddings: Tensor,
         extras: dict[str, Tensor] | None = None,
         prototypes: dict | None = None,
+        show_progress: bool = False,
+        progress_desc: str = "Evidence cards",
     ) -> list[EvidenceCard]:
         """Vectorized batch extraction — pre-computes all global stats once."""
+        t0 = None
+        if show_progress:
+            import time
+            t0 = time.time()
+            print(f"[cards] precompute graph statistics for {self.num_nodes} nodes", flush=True)
         base_logits = self._normalize_base_logits(base_logits)
         self._precompute_global(embeddings, base_logits)
         row, col = self.edge_index
+        if show_progress and t0 is not None:
+            import time
+            print(f"[cards] graph statistics ready in {time.time() - t0:.1f}s", flush=True)
 
         # Pre-compute extras quantiles once
         extras_q = {}
@@ -229,11 +264,30 @@ class EvidenceAdapter:
                 except Exception:
                     pass
 
+        if show_progress:
+            print(f"[cards] generate graph tokens for {len(node_ids)} target nodes", flush=True)
+        graph_tokens_by_node = self.generate_graph_evidence_tokens_vectorized(
+            node_ids=node_ids,
+            base_logits=base_logits,
+            embeddings=embeddings,
+            extras=extras,
+            prototypes=prototypes,
+        )
+
+        iterator = node_ids
+        if show_progress:
+            try:
+                from tqdm import tqdm
+                iterator = tqdm(node_ids, desc=progress_desc, ncols=80)
+            except Exception:
+                iterator = node_ids
+
         cards = []
-        for node_id in node_ids:
+        for node_id in iterator:
             cards.append(self._extract_from_precomputed(
                 node_id, base_logits, embeddings, extras, extras_q, row, col,
                 prototypes=prototypes,
+                graph_tokens=graph_tokens_by_node.get(node_id, []),
             ))
         return cards
 
@@ -292,6 +346,7 @@ class EvidenceAdapter:
         row: Tensor,
         col: Tensor,
         prototypes: dict | None = None,
+        graph_tokens: list[str] | None = None,
     ) -> EvidenceCard:
         reasoning_fields, allowed_support_ids, allowed_counter_ids = self._build_reasoning_fields(
             node_id=node_id,
@@ -314,7 +369,7 @@ class EvidenceAdapter:
 
         # --- Prototype-relative fields ---
         if prototypes:
-            proto_fields = self._compute_prototype_relative_fields(reasoning, prototypes)
+            proto_fields = self._compute_prototype_relative_fields(reasoning, prototypes, graph_tokens)
             for key, val in proto_fields.items():
                 setattr(reasoning, key, val)
             allowed_support_ids.extend([
@@ -323,9 +378,10 @@ class EvidenceAdapter:
             ])
 
         # --- Evidence polarity from graph tokens ---
-        graph_tokens = self.generate_graph_evidence_tokens(
-            node_id, base_logits, embeddings, extras, prototypes,
-        )
+        if graph_tokens is None:
+            graph_tokens = self.generate_graph_evidence_tokens(
+                node_id, base_logits, embeddings, extras, prototypes,
+            )
         fraud_ct = sum(1 for t in graph_tokens if t in TOKEN_POLARITY_FRAUD)
         benign_ct = sum(1 for t in graph_tokens if t in TOKEN_POLARITY_BENIGN)
         neutral_ct = sum(1 for t in graph_tokens if t in TOKEN_POLARITY_NEUTRAL)
@@ -411,8 +467,9 @@ class EvidenceAdapter:
         self,
         reasoning: ReasoningChannel,
         prototypes: dict,
+        graph_tokens: list[str] | None = None,
     ) -> dict:
-        """Compute prototype-relative fields using distinctive tokens when available."""
+        """Compute prototype-relative fields using structured fields or graph tokens."""
         fraud_proto = prototypes.get("fraud_prototype", {})
         benign_proto = prototypes.get("benign_prototype", {})
 
@@ -424,6 +481,44 @@ class EvidenceAdapter:
             fraud_distinctive = {dt["field"] for dt in fraud_summary["distinctive_tokens"]}
         if benign_summary.get("distinctive_tokens"):
             benign_distinctive = {dt["field"] for dt in benign_summary["distinctive_tokens"]}
+
+        graph_token_set = set(graph_tokens or [])
+        fraud_token_matches: list[str] = []
+        benign_token_matches: list[str] = []
+        if graph_token_set:
+            fraud_token_fields = sorted(
+                f for f in (fraud_distinctive or set())
+                if f not in SCORE_BLIND_FIELDS
+            )
+            benign_token_fields = sorted(
+                f for f in (benign_distinctive or set())
+                if f not in SCORE_BLIND_FIELDS
+            )
+            fraud_token_matches = [f for f in fraud_token_fields if f in graph_token_set]
+            benign_token_matches = [f for f in benign_token_fields if f in graph_token_set]
+
+            if fraud_token_fields or benign_token_fields:
+                fraud_ratio = len(fraud_token_matches) / len(fraud_token_fields) if fraud_token_fields else 0.0
+                benign_ratio = len(benign_token_matches) / len(benign_token_fields) if benign_token_fields else 0.0
+                closer_to_fraud = self._ratio_to_level(fraud_ratio) if fraud_token_fields else "unknown"
+                closer_to_benign = self._ratio_to_level(benign_ratio) if benign_token_fields else "unknown"
+                if fraud_token_fields and benign_token_fields:
+                    diff = abs(fraud_ratio - benign_ratio)
+                    if diff < 0.1:
+                        conflict_level = "high"
+                    elif diff < 0.3:
+                        conflict_level = "medium"
+                    else:
+                        conflict_level = "low"
+                else:
+                    conflict_level = "unknown"
+                return {
+                    "closer_to_fraud_prototype": closer_to_fraud,
+                    "closer_to_benign_prototype": closer_to_benign,
+                    "fraud_prototype_matching_fields": fraud_token_matches,
+                    "benign_prototype_matching_fields": benign_token_matches,
+                    "prototype_conflict_level": conflict_level,
+                }
 
         fraud_match, fraud_total, fraud_fields = compute_prototype_similarity(
             reasoning, fraud_proto, fraud_distinctive,
@@ -503,21 +598,19 @@ class EvidenceAdapter:
         else:
             degree_percentile_bucket = "high"
 
-        neighbor_mask = row == node_id
-        neighbor_ids = col[neighbor_mask]
+        neighbor_ids = self._neighbors_for(node_id)
 
         skew = self._nd_skew[node_id].item()
-        if len(neighbor_ids) > 0:
+        if neighbor_ids:
             neighbor_degree_skew_bucket = self._level_threshold(skew, 0.3, 0.7)
         else:
             neighbor_degree_skew_bucket = "unknown"
 
-        if len(neighbor_ids) > 0:
-            one_hop_set = set(neighbor_ids.tolist()) | {node_id}
+        if neighbor_ids:
+            one_hop_set = set(neighbor_ids) | {node_id}
             two_hop_set: set[int] = set()
-            for nid in neighbor_ids.tolist():
-                m = row == nid
-                two_hop_set.update(col[m].tolist())
+            for nid in neighbor_ids:
+                two_hop_set.update(self._neighbors_for(nid))
             overlap = two_hop_set & one_hop_set
             frac = len(overlap) / len(two_hop_set) if len(two_hop_set) > 0 else 0.0
             two_hop_consistency_bucket = self._level_threshold(frac, 0.2, 0.5)
@@ -557,10 +650,10 @@ class EvidenceAdapter:
             "bwgnn_low_band_energy_bucket", "bwgnn_mid_band_energy_bucket",
             "bwgnn_high_band_energy_bucket", "bwgnn_high_low_energy_ratio_bucket",
             "message_residual_bucket",
-        ] + [f"neighbor_{nid.item()}" for nid in neighbor_ids[:5]]
+        ] + [f"neighbor_{nid}" for nid in neighbor_ids[:5]]
         allowed_counter_ids = [
             "counter_signal",
-        ] + [f"counter_{nid.item()}" for nid in neighbor_ids[:3]]
+        ] + [f"counter_{nid}" for nid in neighbor_ids[:3]]
 
         return (
             {
@@ -767,11 +860,11 @@ class EvidenceAdapter:
                     continue
 
         # Pre-compute cosine quantiles once
-        feat_cos_q10 = torch.quantile(self._feat_cos, 0.10).item() if hasattr(self, '_feat_cos') else 0.0
-        emb_cos_q10 = torch.quantile(self._emb_cos, 0.10).item() if hasattr(self, '_emb_cos') else 0.0
-        feat_cos_q90 = torch.quantile(self._feat_cos, 0.90).item() if hasattr(self, '_feat_cos') else 1.0
-        emb_cos_q90 = torch.quantile(self._emb_cos, 0.90).item() if hasattr(self, '_emb_cos') else 1.0
-        logit_std_q10 = torch.quantile(self._neighbor_logit_std, 0.10).item() if hasattr(self, '_neighbor_logit_std') else 0.0
+        feat_cos_q10 = getattr(self, "_feat_cos_q10", 0.0)
+        emb_cos_q10 = getattr(self, "_emb_cos_q10", 0.0)
+        feat_cos_q90 = getattr(self, "_feat_cos_q90", 1.0)
+        emb_cos_q90 = getattr(self, "_emb_cos_q90", 1.0)
+        logit_std_q10 = getattr(self, "_neighbor_logit_std_q10", 0.0)
 
         # Build results
         results: dict[int, list[str]] = {}
@@ -922,7 +1015,6 @@ class EvidenceAdapter:
 
             top10_mask = hf > hf_q90
             high_mask = hf > hf_q50
-            low_mask = ~high_mask
 
             for i in range(n):
                 if top10_mask[i].item():
@@ -1017,16 +1109,14 @@ class EvidenceAdapter:
                 if consistency_mask[i].item():
                     token_sets[i].add("NEIGHBOR_CONSISTENCY_HIGH")
 
-        # Two-hop consistency (requires per-node neighbor lookup)
-        row, col = self.edge_index
+        # Two-hop consistency via cached adjacency lists, avoiding edge-table scans per node.
         for i, node_id in enumerate(node_ids):
-            neighbor_mask = row == node_id
-            neighbor_ids = col[neighbor_mask]
-            if len(neighbor_ids) > 0:
-                one_hop_set = set(neighbor_ids.tolist()) | {node_id}
+            neighbor_ids = self._neighbors_for(node_id)
+            if neighbor_ids:
+                one_hop_set = set(neighbor_ids) | {node_id}
                 two_hop_set: set[int] = set()
-                for nid in neighbor_ids.tolist():
-                    two_hop_set.update(col[row == nid].tolist())
+                for nid in neighbor_ids:
+                    two_hop_set.update(self._neighbors_for(nid))
                 overlap = two_hop_set & one_hop_set
                 frac = len(overlap) / len(two_hop_set) if len(two_hop_set) > 0 else 0.0
                 if frac > 0.5:

@@ -72,3 +72,20 @@ def test_return_debug_outputs():
     assert outputs["delta_scale"].shape == ()
     assert outputs["residual_shift"].shape == (num_nodes,)
     assert torch.isclose(outputs["rho"], torch.tensor(0.3, device=outputs["rho"].device))
+
+
+def test_reasoner_accepts_relation_features():
+    z_dim = 32
+    relation_dim = 9
+    num_nodes = 6
+    reasoner = EvidenceReasoner(z_dim=z_dim, rho=0.2, relation_dim=relation_dim)
+
+    z = torch.randn(num_nodes, z_dim)
+    base_logit = torch.randn(num_nodes)
+    evi_ids = torch.randint(0, get_num_values(), (num_nodes, len(get_evidence_slots())))
+    rel = torch.randn(num_nodes, relation_dim)
+
+    outputs = reasoner(z, base_logit, evi_ids, relation_features=rel)
+
+    assert outputs["final_logit"].shape == (num_nodes,)
+    assert outputs["z_student"].shape[0] == num_nodes

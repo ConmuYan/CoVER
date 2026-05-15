@@ -386,7 +386,11 @@ class OfflineLLMTeacher:
                 _, reasons = verifier.verify(err, retry_cards[i])
                 retry_messages_list.append(retry_msgs_fn(payload, err, reasons))
             
-            retry_batch_results = self._generate_batch_from_messages(retry_messages_list)
+            retry_node_ids = [int(payload.get("node_id", 0)) for payload in retry_payloads]
+            retry_batch_results = self._generate_batch_from_messages(
+                retry_messages_list,
+                node_ids=retry_node_ids,
+            )
             
             next_retry_payloads = []
             next_retry_cards = []
@@ -397,9 +401,11 @@ class OfflineLLMTeacher:
             ):
                 orig_idx = retry_indices[j]
                 orig_err, orig_metadata = final_results[orig_idx]
+                last_reasons = ["parse_failed"]
                 
                 if err_retry is not None:
                     accepted_retry, reasons_retry = verifier.verify(err_retry, retry_card)
+                    last_reasons = reasons_retry
                     if accepted_retry:
                         orig_metadata["attempts"] = [orig_metadata.copy(), retry_metadata.copy()]
                         orig_metadata["final_status"] = "accepted_after_retry"
@@ -413,6 +419,7 @@ class OfflineLLMTeacher:
                 next_retry_indices.append(orig_idx)
                 orig_metadata["attempts"] = orig_metadata.get("attempts", [orig_metadata.copy()])
                 orig_metadata["attempts"].append(retry_metadata.copy())
+                orig_metadata["reject_reasons"] = last_reasons
                 final_results[orig_idx] = (err_retry if err_retry else orig_err, orig_metadata)
             
             retry_payloads = next_retry_payloads
@@ -422,13 +429,18 @@ class OfflineLLMTeacher:
         for i, (err, metadata) in enumerate(final_results):
             if "final_status" not in metadata:
                 metadata["final_status"] = "rejected"
-                metadata["reject_reasons"] = ["max_retries_exceeded"]
+                if not metadata.get("reject_reasons"):
+                    metadata["reject_reasons"] = ["max_retries_exceeded"]
                 metadata["verifier_retries"] = self.max_verifier_retries
         
         return final_results
 
     @torch.inference_mode()
-    def _generate_batch_from_messages(self, messages_list: list[list[dict]]) -> list[tuple[ERR | None, dict[str, Any]]]:
+    def _generate_batch_from_messages(
+        self,
+        messages_list: list[list[dict]],
+        node_ids: list[int] | None = None,
+    ) -> list[tuple[ERR | None, dict[str, Any]]]:
         if self._model is None or self._tokenizer is None:
             raise RuntimeError("Model not loaded")
 
@@ -463,7 +475,7 @@ class OfflineLLMTeacher:
         input_lengths = encoded["attention_mask"].sum(dim=1)
         
         for i, (output, input_len) in enumerate(zip(outputs, input_lengths)):
-            node_id = 0
+            node_id = int(node_ids[i]) if node_ids is not None else 0
             metadata: dict[str, Any] = {
                 "backend": self.backend, "model_name_or_path": self.model_name_or_path,
                 "node_id": node_id, "retry_count": 0, "parsed_ok": False, "parse_error": None, "raw_output": None,
@@ -563,11 +575,12 @@ class OfflineLLMTeacher:
         )
         if is_contrastive:
             import dataclasses
-            if hasattr(ERR, "evidence_direction"):
+            _field_names = {f.name for f in dataclasses.fields(ERR)}
+            if "evidence_direction" in _field_names:
                 err_kwargs["evidence_direction"] = evidence_direction
-            if hasattr(ERR, "evidence_strength"):
+            if "evidence_strength" in _field_names:
                 err_kwargs["evidence_strength"] = evidence_strength
-            if hasattr(ERR, "uncertainty_factors"):
+            if "uncertainty_factors" in _field_names:
                 err_kwargs["uncertainty_factors"] = uncertainty_factors
 
         err = ERR(**err_kwargs)

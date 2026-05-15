@@ -5,7 +5,7 @@ from typing import Any
 
 import yaml
 
-from evidence.schema import ERR, EvidenceCard
+from evidence.schema import ERR, EvidenceCard, ReasoningChannel
 
 SCORE_LEAKAGE_KEYS = frozenset({
     "base_score", "score", "logit", "logits",
@@ -90,14 +90,18 @@ class EvidenceContractVerifier:
             reasons.append("invalid_evidence_type")
         return reasons
 
+    @staticmethod
+    def _reasoning_str_fields() -> frozenset[str]:
+        import dataclasses
+        return frozenset(
+            f.name for f in dataclasses.fields(ReasoningChannel) if f.type == "str"
+        )
+
     def _check_availability(self, err: ERR, card: EvidenceCard) -> list[str]:
         reasons = []
         rea = card.reasoning
 
-        available_fields = {
-            "degree_level", "neighbor_consistency", "feature_neighbor_discrepancy",
-            "detector_signal", "detector_signal_strength", "counter_signal",
-        }
+        available_fields = self._reasoning_str_fields()
         available_ids = set(rea.allowed_support_ids) | set(rea.allowed_counter_ids)
         available = available_fields | available_ids
 
@@ -203,10 +207,7 @@ class EvidenceContractVerifier:
             return []
         reasons = []
         rea = card.reasoning
-        available_fields = {
-            "degree_level", "neighbor_consistency", "feature_neighbor_discrepancy",
-            "detector_signal", "detector_signal_strength", "counter_signal",
-        }
+        available_fields = self._reasoning_str_fields()
         available_ids = set(rea.allowed_support_ids) | set(rea.allowed_counter_ids)
         available = available_fields | available_ids
 

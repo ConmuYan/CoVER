@@ -67,3 +67,18 @@ runs/
 # Temporary files
 *.tmp
 *.log
+
+# OMC ephemeral state (notepad.md and project-memory.json remain tracked)
+.omc/sessions/
+.omc/state/
+.omc/logs/
+.omc/plans/
+.omc/research/
+.omc/cache/
+
+# Local IDE / agents directories
+.agents/
+.codex/
+.claude/
+.sisyphus/
+.ruff_cache/
