@@ -45,9 +45,38 @@ def load_relation_tokens(path: Path) -> dict[int, dict[str, Any]]:
     return {int(row["node_id"]): row for row in load_jsonl(path)}
 
 
-def select_nodes(data, num_nodes: int, seed: int) -> list[int]:
+def select_nodes(
+    data,
+    num_nodes: int,
+    seed: int,
+    selection_mode: str = "random",
+    base_logits: torch.Tensor | None = None,
+) -> list[int]:
+    """Pick nodes to send to LLM judge.
+
+    Modes:
+        random          — original per-split balanced random (default).
+        base_uncertain  — pick nodes with smallest |base_logit| (most
+                          uncertain under base classifier). Targets the
+                          subset where CoVER stands to gain the most.
+                          Restricted to train+val+test (eligible) nodes.
+    """
     if num_nodes <= 0:
         return list(range(data.x.shape[0]))
+
+    if selection_mode == "base_uncertain":
+        if base_logits is None:
+            raise ValueError("base_logits required when selection_mode='base_uncertain'")
+        eligible = (data.train_mask | data.val_mask | data.test_mask).cpu()
+        elig_idx = torch.where(eligible)[0]
+        abs_logit = base_logits.detach().cpu().abs().view(-1)
+        # Lowest |logit| first (most uncertain)
+        order = abs_logit[elig_idx].argsort()
+        selected_idx = elig_idx[order[:num_nodes]]
+        selected = [int(x) for x in selected_idx.tolist()]
+        return sorted(dict.fromkeys(selected))
+
+    # Original random mode
     gen = torch.Generator().manual_seed(seed)
     per_split = max(1, num_nodes // 3)
     selected: list[int] = []
@@ -91,7 +120,7 @@ def build_reasoner_from_stage3(stage3_config: dict[str, Any], z_dim: int, checkp
 
 
 @torch.no_grad()
-def compute_gate_values(config: dict[str, Any], stage3_config: dict[str, Any], data, rel_stats: torch.Tensor, device: torch.device):
+def compute_gate_values(config: dict[str, Any], stage3_config: dict[str, Any], data, rel_stats: torch.Tensor, device: torch.device, base_run_name: str = "base"):
     dataset_name = config["dataset"]["name"]
     model_name = config["model"]["name"]
     seed = int(stage3_config["seed"])
@@ -108,7 +137,11 @@ def compute_gate_values(config: dict[str, Any], stage3_config: dict[str, Any], d
     if "attention_heads" in model_cfg:
         detector_kwargs["attention_heads"] = model_cfg["attention_heads"]
     model = build_detector(**detector_kwargs).to(device)
-    base_path = get_base_checkpoint_path(dataset_name, model_name, seed)
+    base_path = (
+        Path("artifacts/checkpoints") / dataset_name / model_name / base_run_name / f"seed_{seed}" / "base.pt"
+    )
+    if not base_path.exists():
+        raise FileNotFoundError(f"Base checkpoint not found: {base_path}")
     model.load_state_dict(torch.load(base_path, map_location=device, weights_only=False))
     model.eval()
     output = model(data.x.to(device), data.edge_index.to(device), return_output=True)
@@ -131,11 +164,15 @@ def compute_gate_values(config: dict[str, Any], stage3_config: dict[str, Any], d
         relation_features=rel_stats.to(device),
         return_debug=True,
     )
-    return outputs.get("relation_gate_values", torch.empty(data.x.shape[0], 0, device=device)).cpu(), {
-        int(node_id): card.get("reasoning", {})
-        for node_id, card in cards.items()
-        if isinstance(card, dict)
-    }
+    return (
+        outputs.get("relation_gate_values", torch.empty(data.x.shape[0], 0, device=device)).cpu(),
+        {
+            int(node_id): card.get("reasoning", {})
+            for node_id, card in cards.items()
+            if isinstance(card, dict)
+        },
+        base_logits.cpu(),
+    )
 
 
 def main() -> None:
@@ -144,10 +181,32 @@ def main() -> None:
     parser.add_argument("--gate_run_name", default="cover_rel_anchor_gate_nollm")
     parser.add_argument("--output_run_name", default="cover_rel_judge")
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument(
+        "--base_run_name",
+        type=str,
+        default="base",
+        help="Phase 1 base checkpoint run_name (e.g. 'fixed_v1_100ep').",
+    )
     parser.add_argument("--num_nodes", type=int, default=120)
+    parser.add_argument(
+        "--selection_mode",
+        type=str,
+        default="random",
+        choices=["random", "base_uncertain"],
+        help="Node selection strategy. 'random' = per-split balanced random (default); "
+             "'base_uncertain' = top-K nodes by smallest |base_logit| (most uncertain under base).",
+    )
     parser.add_argument("--primary_relation", default=None)
     parser.add_argument("--device", default=None)
     parser.add_argument("--output_dir", default=None)
+    parser.add_argument(
+        "--skip_stage_deps",
+        action="store_true",
+        help="Skip stage2/stage3 artifacts (cards + stage3 reasoner). "
+             "Uses uniform gate_values and empty graph_reasoning. Useful when "
+             "rebuilding packets after artifacts cleanup — only base.pt + "
+             "relation_features are required.",
+    )
     args = parser.parse_args()
 
     config = yaml.safe_load(Path(args.config).read_text())
@@ -166,19 +225,66 @@ def main() -> None:
         val_test_ratio=config["dataset"].get("val_test_ratio", [1, 2]),
         stratified=config["dataset"].get("stratified", False),
     )
-    stage3_config_path = Path("artifacts/logs") / dataset_name / model_name / args.gate_run_name / f"seed_{seed}" / "stage3_config.json"
-    stage3_config = json.loads(stage3_config_path.read_text())
-    stage3_config["run_name"] = args.gate_run_name
-    rel_path = Path(stage3_config["relation_features_path"])
-    rel_stats, rel_meta = load_relation_stats(rel_path, num_nodes=data.x.shape[0])
-    token_path = rel_path.parent / "rel_tokens.jsonl"
-    rel_tokens = load_relation_tokens(token_path)
-    relation_names = [str(x).upper() for x in rel_meta["relations"]]
-    stat_names = [str(x) for x in rel_meta["stat_names_per_relation"]]
-    primary = (args.primary_relation or stage3_config.get("anchor_relation") or relation_names[0]).upper()
-    gate_values, card_reasoning = compute_gate_values(config, stage3_config, data, rel_stats, device)
+    if args.skip_stage_deps:
+        # Minimal path: only need base.pt + relation_features. Uses uniform
+        # gate_values and empty graph_reasoning. anchor_relation falls back
+        # to relation_names[0] if not in config.
+        from utils.paths import get_checkpoint_dir
+        model_cfg = config["model"]
+        detector_kwargs = dict(
+            name=model_cfg["name"],
+            in_channels=data.x.shape[1],
+            hidden_channels=model_cfg.get("hidden_dim", 64),
+            num_layers=model_cfg.get("num_layers", 2),
+            dropout=model_cfg.get("dropout", 0.5),
+        )
+        if "num_bands" in model_cfg:
+            detector_kwargs["num_bands"] = model_cfg["num_bands"]
+        if "attention_heads" in model_cfg:
+            detector_kwargs["attention_heads"] = model_cfg["attention_heads"]
+        base_model = build_detector(**detector_kwargs).to(device)
+        base_path = get_checkpoint_dir(dataset_name, model_name, args.base_run_name, seed) / "base.pt"
+        if not base_path.exists():
+            raise FileNotFoundError(f"Base checkpoint not found: {base_path}")
+        base_model.load_state_dict(torch.load(base_path, map_location=device, weights_only=False))
+        base_model.eval()
+        with torch.no_grad():
+            base_out = base_model(data.x.to(device), data.edge_index.to(device), return_output=True)
+            base_logits = base_out.logits.detach().cpu()
+        # Use the user-supplied default config for relation schema metadata
+        rel_path = Path(config.get("relation_features_path") or
+                        f"artifacts/relation_features/{dataset_name}/{model_name}/seed_{seed}/rel_stats.pt")
+        rel_stats, rel_meta = load_relation_stats(rel_path, num_nodes=data.x.shape[0])
+        token_path = rel_path.parent / "rel_tokens.jsonl"
+        rel_tokens = load_relation_tokens(token_path)
+        relation_names = [str(x).upper() for x in rel_meta["relations"]]
+        stat_names = [str(x) for x in rel_meta["stat_names_per_relation"]]
+        primary = (args.primary_relation or relation_names[0]).upper()
+        # Uniform gate_values
+        gate_values = torch.full((data.x.shape[0], len(relation_names)), 1.0 / len(relation_names))
+        card_reasoning: dict[int, dict] = {}
+        print(f"[skip_stage_deps] base=ok, rel_features=ok, gate=uniform({1/len(relation_names):.3f}), graph_reasoning=empty")
+    else:
+        stage3_config_path = Path("artifacts/logs") / dataset_name / model_name / args.gate_run_name / f"seed_{seed}" / "stage3_config.json"
+        stage3_config = json.loads(stage3_config_path.read_text())
+        stage3_config["run_name"] = args.gate_run_name
+        rel_path = Path(stage3_config["relation_features_path"])
+        rel_stats, rel_meta = load_relation_stats(rel_path, num_nodes=data.x.shape[0])
+        token_path = rel_path.parent / "rel_tokens.jsonl"
+        rel_tokens = load_relation_tokens(token_path)
+        relation_names = [str(x).upper() for x in rel_meta["relations"]]
+        stat_names = [str(x) for x in rel_meta["stat_names_per_relation"]]
+        primary = (args.primary_relation or stage3_config.get("anchor_relation") or relation_names[0]).upper()
+        gate_values, card_reasoning, base_logits = compute_gate_values(config, stage3_config, data, rel_stats, device, base_run_name=args.base_run_name)
 
-    nodes = select_nodes(data, args.num_nodes, seed)
+    nodes = select_nodes(
+        data,
+        args.num_nodes,
+        seed,
+        selection_mode=args.selection_mode,
+        base_logits=base_logits,
+    )
+    print(f"[selection_mode={args.selection_mode}] picked {len(nodes)} nodes")
     packets: list[dict[str, Any]] = []
     for node_id in nodes:
         gate_by_relation = {

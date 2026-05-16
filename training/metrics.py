@@ -97,6 +97,38 @@ def compute_metrics_with_threshold(
     return metrics
 
 
+def find_best_macro_f1_threshold(
+    y_true: np.ndarray,
+    y_pred_prob: np.ndarray,
+    n_thresholds: int = 19,
+    low: float = 0.05,
+    high: float = 0.95,
+) -> tuple[float, float]:
+    """Scan ``n_thresholds`` thresholds in ``[low, high]`` and return
+    ``(best_threshold, best_macro_f1)``.
+
+    Replicates ``get_best_f1`` from the original BWGNN reference
+    implementation (Tang et al., ICML 2022,
+    https://github.com/squareRoot3/Rethinking-Anomaly-Detection,
+    ``main.py``), which sweeps 19 thresholds from 0.05 to 0.95 and
+    picks the one with highest macro-F1.
+
+    The default 0.5 threshold is a poor choice for imbalanced fraud-
+    detection problems where positive-class prevalence is much less
+    than 50%; the original paper's reported macro-F1 numbers are only
+    reproducible with this threshold search applied on the validation
+    set and then carried over to the test set.
+    """
+    best_thre, best_mf1 = 0.5, 0.0
+    for thres in np.linspace(low, high, n_thresholds):
+        preds = (y_pred_prob >= float(thres)).astype(int)
+        mf1 = f1_score(y_true, preds, average="macro", zero_division=0)
+        if mf1 > best_mf1:
+            best_mf1 = float(mf1)
+            best_thre = float(thres)
+    return best_thre, best_mf1
+
+
 def precision_recall_at_k(
     y_true: np.ndarray,
     y_pred_prob: np.ndarray,

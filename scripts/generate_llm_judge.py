@@ -134,6 +134,56 @@ def load_qwen(model_path: str, device: str, dtype: str):
     return tokenizer, model
 
 
+def vllm_generate(packets: list[dict[str, Any]], args) -> list[tuple[dict[str, Any], str, dict[str, Any] | None, str | None]]:
+    """High-throughput vLLM batched generation.
+
+    Builds chat-formatted prompts via the model's tokenizer, then dispatches
+    them to vLLM's continuous batching engine. ~10-30x faster than HF
+    transformers ``model.generate`` on a single 3090 for Qwen-class 4B models.
+    """
+    from transformers import AutoTokenizer
+    from vllm import LLM, SamplingParams
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.model_path, local_files_only=True, trust_remote_code=True, use_fast=True,
+    )
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    prompts: list[str] = []
+    for packet in packets:
+        messages = build_judge_messages(packet)
+        try:
+            text = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True, enable_thinking=False,
+            )
+        except TypeError:
+            text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        prompts.append(text)
+
+    llm = LLM(
+        model=args.model_path,
+        dtype=args.dtype,
+        gpu_memory_utilization=args.gpu_memory_utilization,
+        trust_remote_code=True,
+        max_model_len=args.max_model_len,
+        kv_cache_dtype=args.kv_cache_dtype,
+        enforce_eager=False,
+        disable_log_stats=True,
+    )
+    sampling = SamplingParams(temperature=0.0, max_tokens=args.max_new_tokens)
+    outputs = llm.generate(prompts, sampling, use_tqdm=True)
+
+    rows: list[tuple[dict[str, Any], str, dict[str, Any] | None, str | None]] = []
+    for packet, output in zip(packets, outputs):
+        raw = output.outputs[0].text.strip()
+        try:
+            rows.append((packet, raw, extract_json_object(raw), None))
+        except Exception as exc:
+            rows.append((packet, raw, None, str(exc)))
+    return rows
+
+
 @torch.inference_mode()
 def qwen_generate(packets: list[dict[str, Any]], args) -> list[tuple[dict[str, Any], str, dict[str, Any] | None, str | None]]:
     tokenizer, model = load_qwen(args.model_path, args.device, args.dtype)
@@ -186,7 +236,7 @@ def main() -> None:
     parser.add_argument("--packets_path", required=True)
     parser.add_argument("--output_dir", default=None)
     parser.add_argument("--model_path", default=MODEL_PATH)
-    parser.add_argument("--backend", choices=["qwen", "mock"], default="qwen")
+    parser.add_argument("--backend", choices=["qwen", "vllm", "mock"], default="qwen")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--num_nodes", type=int, default=None)
@@ -195,6 +245,13 @@ def main() -> None:
     parser.add_argument("--dtype", default="float16")
     parser.add_argument("--seed", type=int, default=123)
     parser.add_argument("--max_new_tokens", type=int, default=160)
+    parser.add_argument("--gpu_memory_utilization", type=float, default=0.85,
+                        help="vLLM GPU memory utilization (default 0.85).")
+    parser.add_argument("--max_model_len", type=int, default=4096,
+                        help="vLLM max model context length (default 4096).")
+    parser.add_argument("--kv_cache_dtype", type=str, default="auto",
+                        choices=["auto", "fp8", "fp8_e4m3", "fp8_e5m2"],
+                        help="vLLM KV cache dtype (use fp8 for big models on tight memory).")
     parser.add_argument("--reverify_existing", action="store_true")
     args = parser.parse_args()
 
@@ -221,10 +278,15 @@ def main() -> None:
                 generated.append((packet_by_node[node_id], raw, None, str(exc)))
         args.resume = False
     else:
-        generated = [
-            (packet, json.dumps(mock_judge(packet)), mock_judge(packet), None)
-            for packet in packets
-        ] if args.backend == "mock" else qwen_generate(packets, args)
+        if args.backend == "mock":
+            generated = [
+                (packet, json.dumps(mock_judge(packet)), mock_judge(packet), None)
+                for packet in packets
+            ]
+        elif args.backend == "vllm":
+            generated = vllm_generate(packets, args)
+        else:
+            generated = qwen_generate(packets, args)
 
     raw_rows = load_jsonl(output_dir / "llm_judge_raw.jsonl") if args.resume else []
     structured_rows = load_jsonl(output_dir / "llm_judge_structured.jsonl") if args.resume else []
@@ -287,7 +349,7 @@ def main() -> None:
         "verdict_distribution": dict(Counter(row["verdict"] for row in accepted)),
         "strength_distribution": dict(Counter(row["evidence_strength"] for row in accepted)),
         "backend": args.backend,
-        "model_path": args.model_path if args.backend == "qwen" else "",
+        "model_path": args.model_path if args.backend in ("qwen", "vllm") else "",
     }
     (output_dir / "judge_stats.json").write_text(json.dumps(stats, indent=2, sort_keys=True) + "\n")
     prompt_packet_violations = [

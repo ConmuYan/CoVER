@@ -184,14 +184,32 @@
   "hotPaths": [
     {
       "path": "scripts/train_phase2_reasoner.py",
-      "accessCount": 18,
-      "lastAccessed": 1778928274679,
+      "accessCount": 65,
+      "lastAccessed": 1778955307072,
+      "type": "file"
+    },
+    {
+      "path": "scripts/generate_llm_judge.py",
+      "accessCount": 26,
+      "lastAccessed": 1778955260922,
+      "type": "file"
+    },
+    {
+      "path": "training/phase2_losses.py",
+      "accessCount": 21,
+      "lastAccessed": 1778955194860,
       "type": "file"
     },
     {
       "path": "scripts/train_stage1.py",
-      "accessCount": 7,
-      "lastAccessed": 1778928378058,
+      "accessCount": 18,
+      "lastAccessed": 1778938841389,
+      "type": "file"
+    },
+    {
+      "path": "models/cover_rel_reasoner.py",
+      "accessCount": 11,
+      "lastAccessed": 1778955155357,
       "type": "file"
     },
     {
@@ -201,33 +219,63 @@
       "type": "file"
     },
     {
+      "path": "scripts/run_llm_judge_revived.sh",
+      "accessCount": 4,
+      "lastAccessed": 1778946072195,
+      "type": "file"
+    },
+    {
+      "path": "scripts/train_stage3.py",
+      "accessCount": 3,
+      "lastAccessed": 1778944539474,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/tables/yelpchi_bwgnn_d0_compute_matched_control.md",
+      "accessCount": 2,
+      "lastAccessed": 1778936370923,
+      "type": "file"
+    },
+    {
+      "path": "training/metrics.py",
+      "accessCount": 2,
+      "lastAccessed": 1778937439460,
+      "type": "file"
+    },
+    {
+      "path": "scripts/run_fixed_stage1_sweep.sh",
+      "accessCount": 2,
+      "lastAccessed": 1778938153022,
+      "type": "file"
+    },
+    {
+      "path": "data/load_fraud.py",
+      "accessCount": 2,
+      "lastAccessed": 1778939105844,
+      "type": "file"
+    },
+    {
+      "path": "configs/phase2_reasoner/phase2_yelpchi_bwgnn_full_cover.yaml",
+      "accessCount": 2,
+      "lastAccessed": 1778942218521,
+      "type": "file"
+    },
+    {
+      "path": "evidence/judge_encoder.py",
+      "accessCount": 2,
+      "lastAccessed": 1778949339573,
+      "type": "file"
+    },
+    {
       "path": "augment.md",
       "accessCount": 1,
       "lastAccessed": 1778921011104,
       "type": "file"
     },
     {
-      "path": "training/phase2_losses.py",
-      "accessCount": 1,
-      "lastAccessed": 1778925618954,
-      "type": "file"
-    },
-    {
       "path": "artifacts/tables/yelpchi_bwgnn_revised_sanity_seed42_summary.md",
       "accessCount": 1,
       "lastAccessed": 1778925630225,
-      "type": "file"
-    },
-    {
-      "path": "configs/phase2_reasoner/phase2_yelpchi_bwgnn_full_cover.yaml",
-      "accessCount": 1,
-      "lastAccessed": 1778925630351,
-      "type": "file"
-    },
-    {
-      "path": "models/cover_rel_reasoner.py",
-      "accessCount": 1,
-      "lastAccessed": 1778925661712,
       "type": "file"
     },
     {
@@ -282,6 +330,132 @@
       "path": "configs/yelpchi_bwgnn.yaml",
       "accessCount": 1,
       "lastAccessed": 1778928208599,
+      "type": "file"
+    },
+    {
+      "path": "scripts/run_phase0a_cover_on_base_sweep.sh",
+      "accessCount": 1,
+      "lastAccessed": 1778935653853,
+      "type": "file"
+    },
+    {
+      "path": "scripts/run_phase0b_sensitivity_sweep.sh",
+      "accessCount": 1,
+      "lastAccessed": 1778936177349,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/tables/yelpchi_bwgnn_phase0a_cover_on_base_ladder.md",
+      "accessCount": 1,
+      "lastAccessed": 1778936356337,
+      "type": "file"
+    },
+    {
+      "path": "models/bwgnn.py",
+      "accessCount": 1,
+      "lastAccessed": 1778936820099,
+      "type": "file"
+    },
+    {
+      "path": "external/Rethinking-Anomaly-Detection/BWGNN.py",
+      "accessCount": 1,
+      "lastAccessed": 1778936999125,
+      "type": "file"
+    },
+    {
+      "path": "external/Rethinking-Anomaly-Detection/main.py",
+      "accessCount": 1,
+      "lastAccessed": 1778936999210,
+      "type": "file"
+    },
+    {
+      "path": "external/Rethinking-Anomaly-Detection/dataset.py",
+      "accessCount": 1,
+      "lastAccessed": 1778936999282,
+      "type": "file"
+    },
+    {
+      "path": "scripts/run_phase2_verification.sh",
+      "accessCount": 1,
+      "lastAccessed": 1778940927853,
+      "type": "file"
+    },
+    {
+      "path": "scripts/run_phase2_ablation.sh",
+      "accessCount": 1,
+      "lastAccessed": 1778942623647,
+      "type": "file"
+    },
+    {
+      "path": "scripts/aggregate_ablation.py",
+      "accessCount": 1,
+      "lastAccessed": 1778942624117,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/tables/yelpchi_bwgnn_ablation_loss_arch_5seed.md",
+      "accessCount": 1,
+      "lastAccessed": 1778943084129,
+      "type": "file"
+    },
+    {
+      "path": "evidence/verifier.py",
+      "accessCount": 1,
+      "lastAccessed": 1778943461473,
+      "type": "file"
+    },
+    {
+      "path": "evidence/evidence_packet.py",
+      "accessCount": 1,
+      "lastAccessed": 1778944691025,
+      "type": "file"
+    },
+    {
+      "path": "scripts/run_phase2_ablation_revived.sh",
+      "accessCount": 1,
+      "lastAccessed": 1778945185497,
+      "type": "file"
+    },
+    {
+      "path": "scripts/aggregate_judge_revived.py",
+      "accessCount": 1,
+      "lastAccessed": 1778945523058,
+      "type": "file"
+    },
+    {
+      "path": "scripts/run_phase2_revived_preview.sh",
+      "accessCount": 1,
+      "lastAccessed": 1778947040358,
+      "type": "file"
+    },
+    {
+      "path": "scripts/run_phase2_revived_finish.sh",
+      "accessCount": 1,
+      "lastAccessed": 1778948299758,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/tables/yelpchi_bwgnn_judge_revived_5seed.md",
+      "accessCount": 1,
+      "lastAccessed": 1778948730130,
+      "type": "file"
+    },
+    {
+      "path": "configs/cover-rel-gj/phase2_ablations/phase2_yelpchi_E0_relgate.yaml",
+      "accessCount": 1,
+      "lastAccessed": 1778949065300,
+      "type": "file"
+    },
+    {
+      "path": "scripts/run_kd_pilot.sh",
+      "accessCount": 1,
+      "lastAccessed": 1778950573001,
+      "type": "file"
+    },
+    {
+      "path": "scripts/run_e_pilot.sh",
+      "accessCount": 1,
+      "lastAccessed": 1778951378762,
       "type": "file"
     }
   ]

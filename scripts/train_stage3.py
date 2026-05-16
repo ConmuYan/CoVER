@@ -780,6 +780,13 @@ def main():
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--run_name", type=str, default="rule")
+    parser.add_argument(
+        "--base_run_name",
+        type=str,
+        default="base",
+        help="Phase 1 base checkpoint run_name (e.g. 'fixed_v1_100ep'). Used to locate "
+             "artifacts/checkpoints/{dataset}/{model}/{base_run_name}/seed_{seed}/base.pt.",
+    )
     parser.add_argument("--stage3_run_name", type=str, default=None)
     parser.add_argument("--stage2_run_name", type=str, default=None, help="ERR cache run_name to train from; defaults to --run_name")
     parser.add_argument("--stage2_run_names", nargs="+", type=str, default=None, help="Multiple ERR cache run_names to merge for training")
@@ -1021,11 +1028,13 @@ def main():
         **extra_kwargs,
     ).to(device)
 
-    checkpoint_path = get_base_checkpoint_path(dataset_name, model_name, seed)
+    checkpoint_path = (
+        get_checkpoint_dir(dataset_name, model_name, args.base_run_name, seed) / "base.pt"
+    )
     if checkpoint_path.exists():
         state = torch.load(checkpoint_path, weights_only=True)
         base_model.load_state_dict(state)
-        print(f"Loaded base checkpoint from {checkpoint_path}")
+        print(f"Loaded base checkpoint [run_name={args.base_run_name}] from {checkpoint_path}")
 
     for p in base_model.parameters():
         p.requires_grad = False

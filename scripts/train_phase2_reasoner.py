@@ -159,6 +159,7 @@ def snapshot_base_freeze(
     seed: int,
     base_logits: torch.Tensor,
     base_z: torch.Tensor,
+    ckpt_override: str | Path | None = None,
 ) -> dict[str, str | None]:
     """Capture content hashes for the frozen-base artefacts at a point in time.
 
@@ -175,7 +176,10 @@ def snapshot_base_freeze(
     * ``base_logits_sha256``: hash of the in-memory ``base_logits`` tensor.
     * ``base_z_sha256``:      hash of the in-memory ``base_z`` tensor.
     """
-    ckpt_path = get_base_checkpoint_path(dataset_name, model_name, seed)
+    ckpt_path = (
+        Path(ckpt_override) if ckpt_override is not None
+        else get_base_checkpoint_path(dataset_name, model_name, seed)
+    )
     return {
         "base_ckpt_path": str(ckpt_path),
         "base_ckpt_sha256": _sha256_file(ckpt_path),
@@ -214,10 +218,32 @@ def verify_base_frozen(
 # Frozen base
 # ════════════════════════════════════════════════════════════════════
 
-def load_frozen_base(config: dict, dataset_name: str, model_name: str, seed: int, data, device: torch.device):
-    """Load frozen base BWGNN and cache its logits + embeddings."""
-    ckpt_path = get_base_checkpoint_path(dataset_name, model_name, seed)
-    cache_path = get_base_output_cache_path(dataset_name, model_name, seed)
+def load_frozen_base(
+    config: dict,
+    dataset_name: str,
+    model_name: str,
+    seed: int,
+    data,
+    device: torch.device,
+    ckpt_override: str | Path | None = None,
+):
+    """Load frozen base BWGNN and cache its logits + embeddings.
+
+    When ``ckpt_override`` is provided, the override base.pt is used and a
+    cache file unique to that override is written under
+    ``<default cache dir>/_override_<stem>.pt`` so different bases (e.g.
+    100ep vs 1000ep) cannot collide in the same cache slot.
+    """
+    if ckpt_override is not None:
+        ckpt_path = Path(ckpt_override)
+        if not ckpt_path.exists():
+            raise FileNotFoundError(f"base ckpt_override not found: {ckpt_path}")
+        default_cache = get_base_output_cache_path(dataset_name, model_name, seed)
+        cache_path = default_cache.parent / f"_override_{ckpt_path.parent.name}_{ckpt_path.stem}.pt"
+        print(f"[Phase2] base ckpt override: {ckpt_path} (cache → {cache_path.name})")
+    else:
+        ckpt_path = get_base_checkpoint_path(dataset_name, model_name, seed)
+        cache_path = get_base_output_cache_path(dataset_name, model_name, seed)
     if cache_path.exists():
         payload = torch.load(cache_path, map_location="cpu", weights_only=True)
         meta = payload.get("meta", {})
@@ -299,11 +325,12 @@ def load_relation_features_for_phase2(
 
 def load_judge_data(
     dataset_name: str, model_name: str, seed: int, num_nodes: int,
+    judge_run_name: str = "cover_rel_judge",
 ) -> tuple[torch.Tensor, torch.Tensor, list[dict], dict]:
     """Load judge features, mask, accepted records, and validate audit."""
     judge_dir = (
         Path("artifacts") / "judge_packets" / dataset_name / model_name
-        / "cover_rel_judge" / f"seed_{seed}"
+        / judge_run_name / f"seed_{seed}"
     )
 
     # Load features + mask
@@ -721,6 +748,9 @@ def train_one_epoch(
 
     optimizer.zero_grad()
     loss.backward()
+    grad_clip = p2_cfg.get("grad_clip")
+    if grad_clip is not None and float(grad_clip) > 0:
+        torch.nn.utils.clip_grad_norm_(reasoner.parameters(), max_norm=float(grad_clip))
     optimizer.step()
 
     return loss.item(), loss_dict
@@ -736,7 +766,7 @@ def build_phase2_reasoner(
     device: torch.device,
 ) -> CoVERRelReasoner:
     """Construct the reasoner from config with an explicit judge-path switch."""
-    return CoVERRelReasoner(
+    reasoner = CoVERRelReasoner(
         base_z_dim=z_dim,
         relation_names=relation_names,
         anchor_relation=p2_cfg.get("anchor_relation", relation_names[0]),
@@ -754,6 +784,7 @@ def build_phase2_reasoner(
         alpha_max=p2_cfg.get("alpha_max", 0.0),
         alpha_bias_init=p2_cfg.get("alpha_bias_init", -3.0),
     ).to(device)
+    return reasoner
 
 
 def run_training_stage(
@@ -789,6 +820,34 @@ def run_training_stage(
     early_stop_metric = str(p2_cfg.get("early_stop_metric", "val_auprc"))
     eval_interval = max(int(p2_cfg.get("eval_interval", 1)), 1)
 
+    # ---------- LR schedule ----------
+    lr_schedule = str(p2_cfg.get("lr_schedule", "constant")).lower()
+    warmup_epochs = int(p2_cfg.get("warmup_epochs", 0))
+    lr_min = float(p2_cfg.get("lr_min", 0.0))
+    lr_base = float(p2_cfg.get("lr", 1e-3))
+    min_ratio = lr_min / lr_base if lr_base > 0 else 0.0
+
+    if lr_schedule == "cosine":
+        def _lr_lambda(epoch_idx: int) -> float:
+            if warmup_epochs > 0 and epoch_idx < warmup_epochs:
+                # Linear warmup from min_ratio to 1.0
+                return min_ratio + (1.0 - min_ratio) * (epoch_idx + 1) / warmup_epochs
+            # Cosine decay from 1.0 to min_ratio
+            remaining = max(epochs - warmup_epochs, 1)
+            progress = min(max(epoch_idx - warmup_epochs, 0), remaining) / remaining
+            cosine_factor = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return min_ratio + (1.0 - min_ratio) * cosine_factor
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=_lr_lambda)
+        print(
+            f"[Phase2:{stage_name}] LR schedule: cosine, base={lr_base}, "
+            f"min={lr_min} (ratio {min_ratio:.4g}), warmup={warmup_epochs}"
+        )
+    elif lr_schedule == "constant":
+        scheduler = None
+        print(f"[Phase2:{stage_name}] LR schedule: constant {lr_base}")
+    else:
+        raise ValueError(f"Unknown lr_schedule: {lr_schedule!r} (use 'constant' or 'cosine')")
+
     best_val_score = float("-inf")
     best_state = None
     best_stage_epoch = 0
@@ -820,6 +879,9 @@ def run_training_stage(
             stage_epoch,
             pos_weight=pos_weight,
         )
+
+        if scheduler is not None:
+            scheduler.step()
 
         should_eval = stage_epoch == 1 or stage_epoch == epochs or (stage_epoch % eval_interval == 0)
         val_metrics: dict[str, float] = {}
@@ -1114,6 +1176,18 @@ def main():
                              "branch can actually be learned.")
     parser.add_argument("--tau_gate", type=float, default=None)
     parser.add_argument("--lr", type=float, default=None)
+    parser.add_argument("--epochs", type=int, default=None,
+                        help="Override training epochs from config (per stage when two_stage).")
+    parser.add_argument("--lr_schedule", type=str, default=None,
+                        choices=["constant", "cosine"],
+                        help="LR schedule strategy. 'cosine' anneals from --lr down to --lr_min "
+                             "with optional linear warmup over --warmup_epochs.")
+    parser.add_argument("--warmup_epochs", type=int, default=None,
+                        help="Linear warmup epochs at start of training (used with --lr_schedule cosine).")
+    parser.add_argument("--lr_min", type=float, default=None,
+                        help="Final LR after cosine annealing (must be < --lr).")
+    parser.add_argument("--grad_clip", type=float, default=None,
+                        help="Max grad-norm for clip_grad_norm_; <=0 or unset disables clipping.")
     parser.add_argument("--patience", type=int, default=None)
     parser.add_argument("--early_stop_metric", type=str, default=None)
     parser.add_argument(
@@ -1124,6 +1198,14 @@ def main():
     )
     parser.add_argument("--run_name", type=str, default=None, help="Override run_name")
     parser.add_argument(
+        "--judge_run_name",
+        type=str,
+        default="cover_rel_judge",
+        help="Judge packets subdirectory under artifacts/judge_packets/{dataset}/{model}/. "
+             "Default 'cover_rel_judge' (legacy 120-node sparse). Use 'cover_rel_judge_revived' "
+             "for the 2000-node base-uncertain pipeline anchored on fixed_v1_100ep.",
+    )
+    parser.add_argument(
         "--tensorboard_dir",
         type=str,
         default=None,
@@ -1133,6 +1215,14 @@ def main():
         "--no_tensorboard",
         action="store_true",
         help="Disable TensorBoard logging for Phase2",
+    )
+    parser.add_argument(
+        "--base_ckpt_path",
+        type=str,
+        default=None,
+        help="Override frozen-base checkpoint path. Default uses "
+             "artifacts/checkpoints/<ds>/<model>/base/seed_<seed>/base.pt. "
+             "Used for ablations that vary base strength (e.g. 200ep vs 1000ep base).",
     )
     protocol = parser.add_mutually_exclusive_group()
     protocol.add_argument(
@@ -1181,6 +1271,16 @@ def main():
         p2_cfg["tau_gate"] = args.tau_gate
     if args.lr is not None:
         p2_cfg["lr"] = args.lr
+    if args.epochs is not None:
+        p2_cfg["epochs"] = args.epochs
+    if args.lr_schedule is not None:
+        p2_cfg["lr_schedule"] = args.lr_schedule
+    if args.warmup_epochs is not None:
+        p2_cfg["warmup_epochs"] = args.warmup_epochs
+    if args.lr_min is not None:
+        p2_cfg["lr_min"] = args.lr_min
+    if args.grad_clip is not None:
+        p2_cfg["grad_clip"] = args.grad_clip
     if args.patience is not None:
         p2_cfg["patience"] = args.patience
     if args.early_stop_metric is not None:
@@ -1237,9 +1337,13 @@ def main():
     test_mask = data.test_mask.to(device)
 
     # ── Load frozen base BWGNN ──
-    base_logits, base_z = load_frozen_base(config, dataset_name, model_name, seed, data, device)
+    base_logits, base_z = load_frozen_base(
+        config, dataset_name, model_name, seed, data, device,
+        ckpt_override=args.base_ckpt_path,
+    )
     base_freeze_before = snapshot_base_freeze(
-        dataset_name, model_name, seed, base_logits, base_z
+        dataset_name, model_name, seed, base_logits, base_z,
+        ckpt_override=args.base_ckpt_path,
     )
     z_dim = base_z.shape[1]
 
@@ -1264,13 +1368,13 @@ def main():
 
     if use_judge:
         judge_features, judge_mask_tensor, accepted_records, _audit = load_judge_data(
-            dataset_name, model_name, seed, num_nodes,
+            dataset_name, model_name, seed, num_nodes, judge_run_name=args.judge_run_name,
         )
         judge_features = judge_features.to(device)
         judge_mask_tensor = judge_mask_tensor.to(device)
         judge_dir = (
             Path("artifacts") / "judge_packets" / dataset_name / model_name
-            / "cover_rel_judge" / f"seed_{seed}"
+            / args.judge_run_name / f"seed_{seed}"
         )
         judge_align = build_judge_relation_targets(
             jsonl_path=judge_dir / "accepted_judge.jsonl",
@@ -1544,7 +1648,8 @@ def main():
         "base_freeze_check": verify_base_frozen(
             before=base_freeze_before,
             after=snapshot_base_freeze(
-                dataset_name, model_name, seed, base_logits, base_z
+                dataset_name, model_name, seed, base_logits, base_z,
+                ckpt_override=args.base_ckpt_path,
             ),
         ),
     }
