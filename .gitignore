@@ -75,6 +75,11 @@ runs/
 .omc/plans/
 .omc/research/
 .omc/cache/
+# also ignore any nested .omc/state directories (e.g. configs/.omc/state)
+**/.omc/state/
+**/.omc/sessions/
+**/.omc/logs/
+**/.omc/cache/
 
 # Local IDE / agents directories
 .agents/
