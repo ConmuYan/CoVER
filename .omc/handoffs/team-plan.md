@@ -1,0 +1,32 @@
+## Handoff: team-plan → team-exec
+- **Decided**:
+  - New module path `models/cover_rel_reasoner.py` (do NOT reuse legacy `EvidenceReasoner` to avoid disturbing existing 5-seed `cover_rel_anchor_gate_nollm` artifacts).
+  - New loss `training/phase2_losses.py`; legacy `training/losses.py` untouched.
+  - New training entry `scripts/train_phase2_reasoner.py`; reuses frozen base BWGNN checkpoints + relation features + judge packets already on disk.
+  - Schema-aware gate switched from binary sigmoids (legacy) to **softmax over R relations** so Σ_r g_r = 1 (required by L_align KL target).
+  - `relation_strength_{i,r} = ||Head_r(h_{i,r})||_2` (use post-Head hidden, not raw expert hidden), so dominance reflects actual contribution to u_i.
+  - 4 experiments per dataset: E0 (relation-only), E1 (judge align only, alpha=0), E2 (judge residual, small alpha), E3 (E2 with lambda_trust=0).
+  - GPU 1 stays untouched (in use). Use GPU 0/2/3 for 40 runs.
+- **Rejected**:
+  - Refactoring legacy `EvidenceReasoner` in-place — would force re-validating existing anchor_gate baselines and risks regressing safety properties already audited.
+  - Single-loss design merging trust/sparse/align into one weighted L — needs separate diagnostics per term per Section 9 (mean |delta_rel|, gate entropy, alpha_llm by group).
+  - Strength-aware soft α (`strength_aware_alpha=True` in legacy) — replaced by scalar `alpha_max` so the experiment knob is single-axis.
+- **Risks**:
+  - Frozen base forward must use the same featurization as Stage1 — verify by checking train_stage3.py base reload path; deviation would invalidate the b_i prior.
+  - Judge `accepted_judge.jsonl` row count is small (39 YelpChi / 73 Amazon per seed). L_align eligible set may be tiny; weight L_align cautiously and double-check assertion `alpha_llm[~judge_mask] == 0` strictly.
+  - softmax gate with tau<1 (yelpchi 0.7) sharpens early — initialize relation_residual heads near zero so initial Δ_rel ≈ 0 and BWGNN prior dominates first epochs.
+  - dominance ρ normalization by batch max can be unstable if all strengths near zero — clamp denominator to >= 1e-3.
+- **Files**:
+  - models/cover_rel_reasoner.py (new) — worker-arch
+  - training/phase2_losses.py (new) — worker-arch
+  - scripts/train_phase2_reasoner.py (new) — worker-pipeline
+  - configs/phase2_{ds}_{Ei}_{name}.yaml ×8 (new) — worker-pipeline
+  - tests/test_phase2_reasoner.py + tests/test_phase2_losses.py (new) — worker-test
+  - scripts/run_phase2_experiments.sh (new) — team-lead
+  - scripts/aggregate_phase2_results.py (new) — team-lead
+- **Remaining for team-exec**:
+  - Implement reasoner + loss (worker-arch)
+  - Write configs + training script (worker-pipeline)
+  - Tests + smoke (worker-test)
+  - Run 40 experiments across GPU 0/2/3 (lead)
+  - Aggregate report (lead)

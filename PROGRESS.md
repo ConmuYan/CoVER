@@ -1644,3 +1644,328 @@ Frame SAGE results as a cross-base generalization study in the manuscript:
 - CoVER-REL generalizes to SAGE on YelpChi with even larger relative lift than BWGNN.
 - Amazon Phase2 remains challenging for both bases (both show ~0 improvement at E0).
 - Do NOT deploy SAGE-Gate as a second main detector (mixed verdict does not meet "both datasets positive" criterion).
+
+---
+
+## Task 11 — GCN / GAT Cross-Model Validation (Phase1 → Judge, 5-seed)
+
+### Status
+
+Complete. CoVER-REL pipeline (Phase1 Base → Stage2 Rule ERR → Phase2 CoVER-REL-Gate → Phase2 CoVER-REL-Judge) extended to GCN and GAT base detectors on both YelpChi and Amazon, 5 seeds each. Pipeline is model-agnostic.
+
+### Final 5-Seed Cross-Model Results (mean ± std)
+
+#### YelpChi
+
+| Model | Method | AUPRC | ROC-AUC | Macro-F1 | ΔAUPRC vs Base | ΔAUPRC vs Gate |
+|-------|--------|------:|--------:|---------:|---------------:|---------------:|
+| BWGNN | Base | 0.4577±0.0236 | 0.8014±0.0137 | 0.6379±0.0202 | — | — |
+| BWGNN | Gate (anchor=RUR) | 0.4843 | — | — | +0.0266 | — |
+| BWGNN | Judge | 0.4843 | — | — | +0.0266 | +0.0000 |
+| GCN | Base | 0.1756±0.0058 | 0.5504±0.0117 | — | — | — |
+| GCN | Gate (anchor=RUR) | 0.4657±0.0141 | 0.8481±0.0094 | — | **+0.2901** | — |
+| GCN | Judge | 0.4654±0.0131 | 0.8489±0.0093 | — | +0.2899 | -0.0002 |
+| GAT (heads=1) | Base | 0.1453±0.0061 | 0.4993±0.0128 | 0.4608±0.0000 | — | — |
+| GAT (heads=1) | Gate (anchor=RUR) | 0.1598±0.0134 | 0.5449±0.0428 | 0.4608±0.0000 | +0.0145 | — |
+| GAT (heads=1) | Judge | **0.3630±0.0546** | **0.8134±0.0274** | **0.6767±0.0187** | **+0.2176** | **+0.2032** |
+
+#### Amazon
+
+| Model | Method | AUPRC | ROC-AUC | Macro-F1 | ΔAUPRC vs Base | ΔAUPRC vs Gate |
+|-------|--------|------:|--------:|---------:|---------------:|---------------:|
+| BWGNN | Base | 0.8512±0.0214 | 0.9585±0.0261 | 0.9170±0.0058 | — | — |
+| BWGNN | Gate (anchor=UVU) | 0.8547 | — | — | +0.0035 | — |
+| BWGNN | Judge | 0.8549 | — | — | +0.0037 | +0.0002 |
+| GCN | Base | 0.2514 | — | — | — | — |
+| GCN | Gate (anchor=UVU) | 0.2515 | — | — | +0.0000 | — |
+| GCN | Judge | 0.2513 | — | — | -0.0002 | -0.0002 |
+| GAT (heads=1) | Base | 0.1829±0.2627 | 0.5447±0.2469 | — | — | — |
+| GAT (heads=1) | Gate (anchor=UVU) | 0.2732±0.2674 | 0.6893±0.1834 | — | +0.0823 | — |
+| GAT (heads=1) | Judge | 0.2819±0.2700 | 0.6917±0.1837 | 0.6238±0.1671 | +0.0990 | +0.0087 |
+
+### Method-Agnostic Findings
+
+1. **Phase2 rescues weak base on strong anchor**: Weak base (GCN-YelpChi at 0.176 AUPRC, GAT-YelpChi at 0.145) + strong anchor (RUR) → Phase2 Gate rescues to 0.466 / Judge to 0.363. The pipeline does not depend on the base detector reproducing BWGNN's spectral signal.
+
+2. **Novel Judge boost on weak GAT (YelpChi)**: For YelpChi GAT (heads=1), Judge AUPRC = 0.363 vs Gate AUPRC = 0.160 (ΔJ-Gate **+0.2032**). On BWGNN and GCN, Judge is neutral over Gate (Δ ≈ 0). The LLM judge contributes meaningfully only when base + Gate has not yet captured the relation evidence — a recovery mechanism, not a stacking trick.
+
+3. **Anchor strength dominates Phase2 lift ceiling**: YelpChi-RUR is strong (BWGNN baseline saw +0.027); Amazon-UVU is weak (+0.003). On weak anchor (Amazon), Phase2 has limited room even with weak base (Amazon-GCN +0.000, Amazon-GAT +0.099 with high seed variance).
+
+4. **High variance on weak anchor + random base**: Amazon GAT shows seed-dependent rescue (seed 42 +0.387 vs seeds 123/456 ~0). Phase2 reasoner may or may not find a working solution per seed when both anchor and base are weak.
+
+### GAT-Specific Implementation Notes
+
+- **heads=1** due to attention saturation on YelpChi's 7.7M-edge graph (heads≥2 OOM on 24GB GPU even with non-deterministic mode). Matches GATv2 default.
+- **use_deterministic_algorithms disabled for GAT only** (BWGNN/GCN/SAGE still deterministic) — scatter_add_ deterministic implementation 3x memory overhead on dense graphs.
+- attention_heads passthrough bug fixed in `scripts/train_stage1.py`, `scripts/train_stage3.py`, `scripts/generate_stage2_err.py`, `scripts/build_judge_packets.py` (same `extra_kwargs` pattern as 720dad7 SAGE adaptation).
+- Reproducibility: YelpChi GAT max_abs_diff = 5.29e-07 (near bit-exact), Amazon GAT max_abs_diff = 8.98e-01 (dataset-amplified non-determinism). 5-seed means are stable via CLT; single-seed numbers should not be reproduced exactly for Amazon GAT.
+
+### Incident Log
+
+- BWGNN `seed_42/base.pt` was overwritten by a `--debug` smoke test (production path collision). Restored via deterministic re-train; metrics match baseline (ROC=0.7958, Macro-F1=0.6305). `train_stage1.py` now guards `--debug` by forcing `run_name="debug"` when `run_name="base"`.
+
+### Safety Audit Summary (12 cycles, all PASS)
+
+- pytest: 323 passed, 2 skipped throughout.
+- 0 forbidden field leaks in any teacher_payloads.jsonl or judge_packets/judge_packet_texts.jsonl (4 ds×model × 5 seeds).
+- LLM Judge acceptance rate ≥ 0.80 for all seeds × ds×model combos (mean 0.86–0.95).
+- BWGNN baseline immutability re-verified across all 12 audit cycles.
+- Full report: `artifacts/reports/cross_model_audit.md` (415 lines).
+
+### Files Changed
+
+```
+configs/yelpchi_gcn.yaml             ✅ Rewritten (BWGNN protocol alignment)
+configs/yelpchi_gat.yaml             ✅ Rewritten (heads=1, BWGNN protocol)
+configs/amazon_gcn.yaml              ✅ New
+configs/amazon_gat.yaml              ✅ New
+configs/phase2_yelpchi_gcn_E0_relgate.yaml       ✅ New
+configs/phase2_yelpchi_gcn_E2_judge_residual.yaml ✅ New
+configs/phase2_amazon_gcn_E0_relgate.yaml         ✅ New
+configs/phase2_amazon_gcn_E2_judge_residual.yaml  ✅ New
+configs/phase2_yelpchi_gat_E0_relgate.yaml        ✅ New
+configs/phase2_yelpchi_gat_E2_judge_residual.yaml ✅ New
+configs/phase2_amazon_gat_E0_relgate.yaml         ✅ New
+configs/phase2_amazon_gat_E2_judge_residual.yaml  ✅ New
+scripts/train_stage1.py              ✅ Updated (deterministic env wrapper + GAT skip + debug run_name guard + attention_heads passthrough)
+scripts/train_stage3.py              ✅ Updated (attention_heads passthrough)
+scripts/generate_stage2_err.py       ✅ Updated (attention_heads passthrough)
+scripts/build_judge_packets.py       ✅ Updated (attention_heads + num_bands conditional)
+tests/test_detector_output_dim.py    ✅ New (17 tests, GCN/SAGE/GAT/BWGNN output contract)
+external/README_GCN_GAT.md           ✅ New (PyG = official; BWGNN paper protocol reference)
+artifacts/tables/yc_gcn_phase2_gate_5seed.md       ✅ New
+artifacts/tables/yc_gcn_phase2_judge_5seed.md      ✅ New
+artifacts/tables/yc_gat_phase2_gate_5seed.md       ✅ New
+artifacts/tables/yc_gat_phase2_judge_5seed.md      ✅ New
+artifacts/tables/am_gcn_phase2_gate_5seed.md       ✅ New
+artifacts/tables/am_gcn_phase2_judge_5seed.md      ✅ New
+artifacts/tables/am_gat_phase2_gate_5seed.md       ✅ New
+artifacts/tables/am_gat_phase2_judge_5seed.md      ✅ New
+artifacts/tables/paper_cross_model_results.csv     ✅ New (16 rows: 4 datasets × 4 cells incl. BWGNN reference)
+artifacts/tables/paper_cross_model_results.md      ✅ New
+artifacts/reports/cross_model_audit.md             ✅ New (415 lines, 12 audit cycles)
+```
+
+### Verification
+
+- All 7 stage tables generated.
+- 5×4 = 20 base.pt + 20 phase2_E0 reasoner.pt + 20 phase2_E2 reasoner.pt artifacts.
+- Verifier-confirmed safety across 12 audit cycles.
+- BWGNN main results untouched.
+
+### Next Step
+
+Use generated paper artifacts to extend the cross-model section of the manuscript. Recommended framing in `artifacts/paper/method_section_draft.md`.
+
+---
+
+## Task 12 — Two-Phase CoVER-REL Reasoner Doc & Config Reorg (2026-05-16)
+
+> Status: **DONE (documentation + config layout only — no model code, no
+> reruns, no result numbers changed)**
+
+### Objective
+
+Migrate canonical documentation from the older "Stage3 anchor_gate + Stage3
+judge_train (CoVER-REL-Gate / CoVER-REL-Judge)" narrative to the current
+**two-phase CoVER-REL Reasoner** narrative, and reorganize `configs/` so the
+legacy Gate/Judge family is grouped under a single subdir.
+
+This task **does not**:
+
+- modify model code, losses, or training scripts beyond hardcoded config paths;
+- rerun experiments;
+- change any existing result numbers;
+- delete legacy artifacts or historical reports under `artifacts/`.
+
+### Canonical Method (recap)
+
+```
+Phase1 : fresh base detector (BWGNN or GraphSAGE) → frozen as structural prior
+Phase2 : one unified, base-agnostic CoVER-REL Reasoner over
+         relation-aware evidence and optional contract-verified
+         score-blind LLM judge features
+       → z_i = b_i + Δ_rel,i + α_i · Δ_llm,i
+```
+
+Total loss:
+
+```
+L_CoVER = L_cls + λ_trust · L_trust + λ_sparse · L_sparse + λ_align · L_align
+```
+
+The LLM judge is a **score-blind, contract-verified, conservative** alignment
+/ explanation signal — not a teacher, predictor, or main metric source.
+
+### Run-Label Taxonomy (new)
+
+| Label                       | Config root                                       |
+|-----------------------------|---------------------------------------------------|
+| legacy Stage3 anchor_gate   | `configs/cover-rel-gj/stage3_legacy/`             |
+| legacy Stage3 judge_train   | `configs/cover-rel-gj/stage3_legacy/`             |
+| Phase2 E0 (relgate)         | `configs/cover-rel-gj/phase2_ablations/`          |
+| Phase2 E1 (judge_align)     | `configs/cover-rel-gj/phase2_ablations/`          |
+| Phase2 E2 (judge_residual)  | `configs/cover-rel-gj/phase2_ablations/`          |
+| Phase2 E3 (no_trust)        | `configs/cover-rel-gj/phase2_ablations/`          |
+| **Phase2 confirmed**        | **`configs/phase2_reasoner/`**                    |
+
+`cover-rel-gj` = legacy **G**ate + **J**udge family. New experiments target
+`configs/phase2_reasoner/`.
+
+### GraphSAGE Integration Summary (artifact-backed)
+
+The Phase2 Reasoner exposes a base-agnostic interface; swapping the Phase1
+base only changes which checkpoint is loaded.
+
+- **YelpChi-SAGE confirmed** (5-seed: 42, 123, 456, 789, 2026), source
+  `artifacts/reports/sage_confirmed_vs_sage_baselines.md`,
+  config `configs/phase2_reasoner/phase2_yelpchi_sage_confirm_lalign_1em2_standard.yaml`:
+  - mean AUPRC **0.4786 ± 0.0522** (~41% std cut vs default Phase2 ~0.089)
+  - paired ΔAUPRC vs Phase1 SAGE base = **+0.2540**, t=**+6.82** (p<0.01)
+  - paired ΔAUPRC vs legacy Stage3 anchor_gate = +0.0321, t=+2.53 (marginal at n=5)
+  - paired ΔAUPRC vs Phase2 default E0/E1/E2 = +0.025..+0.028 (ns in mean;
+    real value is variance reduction / worst-seed rescue, e.g. seed_456 0.32 → 0.42)
+  - `alpha_max = 0`, mean `α_llm = 0` → gain is judge-aligned relation
+    reasoning / regularization, NOT direct LLM residual prediction
+  - safety: 5/5 seeds `max_abs_alpha_llm_rejected < 1e-6`
+- **Amazon-SAGE**: remains diagnostic / saturation case (Phase2 E0 Δ ≈ 0 on
+  smoke seed). Do not present as solved.
+
+The LLM judge in the confirmed config contributes through `L_align` only;
+it does not act as a residual predictor.
+
+### Configs Reorganized (git mv preserves history)
+
+```
+configs/
+├── README.md                                # new index + layout reference
+├── {yelpchi,amazon}_{bwgnn,sage,gcn,gat}.yaml   # Phase1 base (unchanged)
+│
+├── phase2_reasoner/                          # canonical Phase2 unified reasoner
+│   ├── phase2_yelpchi_sage_confirm_lalign_1em2_standard.yaml
+│   └── phase2_amazon_yelpstyle_judge_align.yaml
+│
+└── cover-rel-gj/                             # legacy Gate + Judge family
+    ├── stage3_legacy/                        # 8 files (Stage3 anchor_gate / judge_train)
+    │   stage3_cover_rel_amazon_nollm.yaml
+    │   stage3_cover_rel_amazon_sage_nollm.yaml
+    │   stage3_cover_rel_gate_nollm.yaml
+    │   stage3_cover_rel_gcn_gate_nollm.yaml
+    │   stage3_cover_rel_judge_amazon.yaml
+    │   stage3_cover_rel_judge_yelpchi.yaml
+    │   stage3_cover_rel_nollm.yaml
+    │   stage3_cover_rel_yelpchi_sage_nollm.yaml
+    │
+    └── phase2_ablations/                     # 26 files (E0/E1/E2/E3 across BWGNN/SAGE/GCN/GAT)
+        phase2_{yelpchi,amazon}_E0_relgate.yaml
+        phase2_{yelpchi,amazon}_E1_judge_align.yaml
+        phase2_{yelpchi,amazon}_E2_judge_residual.yaml
+        phase2_{yelpchi,amazon}_E3_no_trust.yaml
+        phase2_{yelpchi,amazon}_{gcn,gat}_E{0,2}*.yaml
+        phase2_{yelpchi,amazon}_sage_E{0,1,2}.yaml
+        phase2_amazon_E{0,1,2,3}_*_v2.yaml
+```
+
+All 36 legacy files were moved via `git mv` (renames preserved). The two
+canonical files were moved to `configs/phase2_reasoner/` (one was untracked
+and moved via plain `mv`).
+
+### Hardcoded Path References Updated
+
+14 scripts/tests/handoffs/memory files were rewritten to point at the new
+locations:
+
+```
+scripts/run_phase2_yelpchi_best_cuda.py             (1 hit)
+scripts/train_phase2_yelpchi_packed_judge_sweep.py  (1 hit)
+scripts/train_phase2_reasoner.py                    (2 hits, docstring example)
+scripts/build_judge_packets.py                      (1 hit)
+scripts/run_phase2_amazon_focused_cuda.py           (17 hits)
+scripts/run_cover_rel_5seed_diagnostics.py          (1 hit)
+scripts/run_cover_rel_ablation_report.py            (1 hit)
+scripts/run_stage3_judge.sh                         (2 hits)
+scripts/run_phase2_yelpchi_targeted_sensitivity.sh  (2 hits)
+scripts/run_phase2_yelpchi_queue_worker.sh          (2 hits)
+scripts/run_phase2_amazon_default_candidates.sh     (2 hits)
+tests/test_relation_gate.py                         (1 hit)
+.omc/handoffs/team-plan-sage.md                     (2 hits)
+.omc/project-memory.json                            (5 hits)
+```
+
+Plus 4 shell templates whose CFG line uses variable interpolation (manually
+edited):
+
+```
+scripts/run_stage3_sage_gate.sh        configs/cover-rel-gj/stage3_legacy/...
+scripts/run_judge_sage.sh              configs/cover-rel-gj/stage3_legacy/...
+scripts/run_phase2_sage_experiments.sh configs/cover-rel-gj/phase2_ablations/...
+scripts/run_phase2_experiments.sh      configs/cover-rel-gj/phase2_ablations/...
+```
+
+Historical reports under `artifacts/reports/`, `artifacts/paper/`, and prior
+PROGRESS.md entries retain the old `configs/<name>.yaml` paths verbatim as
+time-stamped snapshots (per the "do not delete historical logs" rule).
+
+### Documentation Updated
+
+| File                              | Change                                                                                                              |
+|-----------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| `docs/cover_main.md`              | Rewrote to canonical two-phase Reasoner narrative; loss formula, E0/E1/E2/E3 variants, SAGE cross-base section, legacy note |
+| `AGENTS.md`                       | New two-phase framing, run-label taxonomy, required run metadata, safety constraints, legacy preservation rule       |
+| `docs/sage_paper_alignment.md`    | Reframed as cross-base validation of the Reasoner interface; confirmed-NEW result + Amazon diagnostic caveat         |
+| `configs/README.md`               | New index: layout, E0/E1/E2/E3 taxonomy, migration map (old → new), "what goes where" guidance                       |
+| `PROGRESS.md`                     | This Task 12 entry appended (no historical rewrite)                                                                  |
+
+### Files Changed
+
+```
+Docs / index:
+  AGENTS.md                                          ✅ Rewritten
+  docs/cover_main.md                                 ✅ Rewritten
+  docs/sage_paper_alignment.md                       ✅ Rewritten
+  configs/README.md                                  ✅ New
+  PROGRESS.md                                        ✅ Appended Task 12
+
+Configs moved (git mv = renamed, history preserved):
+  configs/stage3_cover_rel_*.yaml × 8                → configs/cover-rel-gj/stage3_legacy/
+  configs/phase2_*_E{0,1,2,3}*.yaml × ~26            → configs/cover-rel-gj/phase2_ablations/
+  configs/phase2_yelpchi_sage_confirm_lalign_1em2_standard.yaml → configs/phase2_reasoner/
+  configs/phase2_amazon_yelpstyle_judge_align.yaml   → configs/phase2_reasoner/  (was untracked)
+
+Code references rewritten (no logic changes):
+  14 files batch-rewritten via Python; 4 shell templates manually edited
+```
+
+### Verification
+
+- `git status` shows all 36 tracked config moves as renames (R), preserving history.
+- 13 concrete new config paths referenced in scripts/tests/handoffs/memory verified
+  to exist on disk.
+- yaml.safe_load sanity over 3 representative configs (one per group):
+  - `configs/phase2_reasoner/phase2_yelpchi_sage_confirm_lalign_1em2_standard.yaml`
+  - `configs/cover-rel-gj/stage3_legacy/stage3_cover_rel_gate_nollm.yaml`
+  - `configs/cover-rel-gj/phase2_ablations/phase2_yelpchi_E0_relgate.yaml`
+  All load with the expected top-level keys.
+- 0 old-style hardcoded paths remaining in `scripts/` or `tests/`
+  (template-form references in handoffs are intentionally preserved as
+  historical descriptions).
+
+### Limitations / Known Followups
+
+- Amazon-SAGE under the canonical Phase2 Reasoner has not been confirmed
+  with a full 5-seed sweep; current entries describe it as diagnostic.
+- `docs/cover_guide.md` and `docs/alignment.md` were not rewritten in this
+  task. The guide still uses the older Gate/Judge "final runs" framing;
+  it should be revisited in a follow-up if/when paper text is finalized.
+- Historical run-name vocabulary (`cover_rel_anchor_gate_nollm`,
+  `cover_rel_judge_strength_gate`, etc.) is preserved in
+  `artifacts/checkpoints/`, `artifacts/reports/`, and earlier PROGRESS.md
+  entries by design.
+
+### Next Step
+
+When the manuscript / Phase2 paper text is updated, draw from
+`docs/cover_main.md`, `docs/sage_paper_alignment.md`, and the existing
+`artifacts/paper/` and `artifacts/reports/` artifacts. Do not add new
+auxiliary losses or change the canonical formulation without a separate
+experiment-backed task.

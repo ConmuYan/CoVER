@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1778830305860,
+  "lastScanned": 1778920701410,
   "projectRoot": "/data1/mq/codes/awesome-graph-anomaly-detection/cover-fd",
   "techStack": {
     "languages": [
@@ -45,27 +45,27 @@
       "path": "artifacts",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1778830305854,
+      "lastAccessed": 1778920701404,
       "keyFiles": []
     },
     "configs": {
       "path": "configs",
       "purpose": null,
-      "fileCount": 10,
-      "lastAccessed": 1778830305854,
+      "fileCount": 9,
+      "lastAccessed": 1778920701405,
       "keyFiles": [
+        "README.md",
         "amazon_bwgnn.yaml",
-        "stage3_cover_rel_amazon_nollm.yaml",
-        "stage3_cover_rel_gate_nollm.yaml",
-        "stage3_cover_rel_judge_amazon.yaml",
-        "stage3_cover_rel_judge_yelpchi.yaml"
+        "amazon_gat.yaml",
+        "amazon_gcn.yaml",
+        "amazon_sage.yaml"
       ]
     },
     "data": {
       "path": "data",
       "purpose": "Data files",
       "fileCount": 3,
-      "lastAccessed": 1778830305855,
+      "lastAccessed": 1778920701405,
       "keyFiles": [
         "__init__.py",
         "load_fraud.py",
@@ -76,7 +76,7 @@
       "path": "datasets",
       "purpose": null,
       "fileCount": 2,
-      "lastAccessed": 1778830305855,
+      "lastAccessed": 1778920701405,
       "keyFiles": [
         "Amazon.mat",
         "YelpChi.mat"
@@ -85,8 +85,8 @@
     "docs": {
       "path": "docs",
       "purpose": "Documentation",
-      "fileCount": 6,
-      "lastAccessed": 1778830305856,
+      "fileCount": 7,
+      "lastAccessed": 1778920701406,
       "keyFiles": [
         "alignment.md",
         "bwgnn_integration_notes.md",
@@ -99,7 +99,7 @@
       "path": "evidence",
       "purpose": null,
       "fileCount": 18,
-      "lastAccessed": 1778830305857,
+      "lastAccessed": 1778920701407,
       "keyFiles": [
         "__init__.py",
         "adapter.py",
@@ -111,41 +111,43 @@
     "external": {
       "path": "external",
       "purpose": null,
-      "fileCount": 0,
-      "lastAccessed": 1778830305857,
-      "keyFiles": []
+      "fileCount": 1,
+      "lastAccessed": 1778920701407,
+      "keyFiles": [
+        "README_GCN_GAT.md"
+      ]
     },
     "models": {
       "path": "models",
       "purpose": "Data models",
-      "fileCount": 5,
-      "lastAccessed": 1778830305857,
+      "fileCount": 6,
+      "lastAccessed": 1778920701407,
       "keyFiles": [
         "__init__.py",
         "base.py",
         "bwgnn.py",
-        "gnn.py",
-        "reasoner.py"
+        "cover_rel_reasoner.py",
+        "gnn.py"
       ]
     },
     "scripts": {
       "path": "scripts",
       "purpose": "Build/utility scripts",
-      "fileCount": 41,
-      "lastAccessed": 1778830305858,
+      "fileCount": 64,
+      "lastAccessed": 1778920701407,
       "keyFiles": [
+        "aggregate_phase2_custom_runs.py",
+        "aggregate_phase2_results.py",
+        "aggregate_phase2_sage.py",
         "aggregate_results.py",
-        "aggregate_sweep_results.py",
-        "analyze_verifier_rejections.py",
-        "audit_all_splits.py",
-        "audit_fresh_stage1.py"
+        "aggregate_sweep_results.py"
       ]
     },
     "tests": {
       "path": "tests",
       "purpose": "Test files",
-      "fileCount": 44,
-      "lastAccessed": 1778830305858,
+      "fileCount": 48,
+      "lastAccessed": 1778920701408,
       "keyFiles": [
         "test_base_model_output.py",
         "test_bwgnn.py",
@@ -157,19 +159,20 @@
     "training": {
       "path": "training",
       "purpose": null,
-      "fileCount": 3,
-      "lastAccessed": 1778830305858,
+      "fileCount": 4,
+      "lastAccessed": 1778920701408,
       "keyFiles": [
         "__init__.py",
         "losses.py",
-        "metrics.py"
+        "metrics.py",
+        "phase2_losses.py"
       ]
     },
     "utils": {
       "path": "utils",
       "purpose": "Utility functions",
       "fileCount": 4,
-      "lastAccessed": 1778830305858,
+      "lastAccessed": 1778920701408,
       "keyFiles": [
         "gpu.py",
         "paths.py",
@@ -180,303 +183,105 @@
   },
   "hotPaths": [
     {
+      "path": "scripts/train_phase2_reasoner.py",
+      "accessCount": 18,
+      "lastAccessed": 1778928274679,
+      "type": "file"
+    },
+    {
       "path": "scripts/train_stage1.py",
-      "accessCount": 21,
-      "lastAccessed": 1778858776452,
+      "accessCount": 7,
+      "lastAccessed": 1778928378058,
       "type": "file"
     },
     {
-      "path": "AGENTS.md",
-      "accessCount": 11,
-      "lastAccessed": 1778854760086,
+      "path": "scripts/run_d0_base_saturation_sweep.sh",
+      "accessCount": 6,
+      "lastAccessed": 1778929311237,
       "type": "file"
     },
     {
-      "path": "models/gnn.py",
-      "accessCount": 10,
-      "lastAccessed": 1778856244528,
+      "path": "augment.md",
+      "accessCount": 1,
+      "lastAccessed": 1778921011104,
       "type": "file"
     },
     {
-      "path": "configs/yelpchi_gat.yaml",
-      "accessCount": 9,
-      "lastAccessed": 1778860460137,
+      "path": "training/phase2_losses.py",
+      "accessCount": 1,
+      "lastAccessed": 1778925618954,
       "type": "file"
     },
     {
-      "path": "configs/stage3_cover_rel_amazon_nollm.yaml",
-      "accessCount": 8,
-      "lastAccessed": 1778854793631,
+      "path": "artifacts/tables/yelpchi_bwgnn_revised_sanity_seed42_summary.md",
+      "accessCount": 1,
+      "lastAccessed": 1778925630225,
+      "type": "file"
+    },
+    {
+      "path": "configs/phase2_reasoner/phase2_yelpchi_bwgnn_full_cover.yaml",
+      "accessCount": 1,
+      "lastAccessed": 1778925630351,
+      "type": "file"
+    },
+    {
+      "path": "models/cover_rel_reasoner.py",
+      "accessCount": 1,
+      "lastAccessed": 1778925661712,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/logs/yelpchi/bwgnn/phase2_yelpchi_bwgnn_revised_r2_align_alpha0_lint1em2/seed_42/repro_command.txt",
+      "accessCount": 1,
+      "lastAccessed": 1778925672568,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/logs/yelpchi/bwgnn/phase2_yelpchi_bwgnn_revised_r3_full_alpha01_lint1em2/seed_42/repro_command.txt",
+      "accessCount": 1,
+      "lastAccessed": 1778925672723,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/logs/yelpchi/bwgnn/phase2_yelpchi_bwgnn_revised_r1_relgate_lint1em2/seed_42/repro_command.txt",
+      "accessCount": 1,
+      "lastAccessed": 1778925672780,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/logs/yelpchi/bwgnn/phase2_yelpchi_bwgnn_revised_r3_full_alpha01_lint1em2/seed_42/repro_config.yaml",
+      "accessCount": 1,
+      "lastAccessed": 1778925683112,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/logs/yelpchi/bwgnn/phase2_yelpchi_bwgnn_revised_r3_full_alpha01_lint1em2/seed_42/phase2_diagnostics.json",
+      "accessCount": 1,
+      "lastAccessed": 1778925683218,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/tables/yelpchi_bwgnn_ultraqa_alpha_activation_seed42.md",
+      "accessCount": 1,
+      "lastAccessed": 1778926372007,
+      "type": "file"
+    },
+    {
+      "path": "scripts/run_yelpchi_bwgnn_champion_5seed.sh",
+      "accessCount": 1,
+      "lastAccessed": 1778927517579,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/tables/yelpchi_bwgnn_champion_v1_5seed_summary.md",
+      "accessCount": 1,
+      "lastAccessed": 1778927723019,
       "type": "file"
     },
     {
       "path": "configs/yelpchi_bwgnn.yaml",
-      "accessCount": 7,
-      "lastAccessed": 1778854788023,
-      "type": "file"
-    },
-    {
-      "path": "configs/amazon_bwgnn.yaml",
-      "accessCount": 7,
-      "lastAccessed": 1778854793521,
-      "type": "file"
-    },
-    {
-      "path": "data/load_fraud.py",
-      "accessCount": 6,
-      "lastAccessed": 1778856177892,
-      "type": "file"
-    },
-    {
-      "path": "models/bwgnn.py",
-      "accessCount": 5,
-      "lastAccessed": 1778854776552,
-      "type": "file"
-    },
-    {
-      "path": "configs/yelpchi_sage.yaml",
-      "accessCount": 5,
-      "lastAccessed": 1778855399994,
-      "type": "file"
-    },
-    {
-      "path": "scripts/train_stage3.py",
-      "accessCount": 5,
-      "lastAccessed": 1778861026549,
-      "type": "file"
-    },
-    {
-      "path": "configs/sweeps/yelpchi_bwgnn_grid.yaml",
-      "accessCount": 4,
-      "lastAccessed": 1778836588118,
-      "type": "file"
-    },
-    {
-      "path": "configs/sweeps/amazon_bwgnn_grid.yaml",
-      "accessCount": 4,
-      "lastAccessed": 1778836588554,
-      "type": "file"
-    },
-    {
-      "path": "training/metrics.py",
-      "accessCount": 4,
-      "lastAccessed": 1778849857725,
-      "type": "file"
-    },
-    {
-      "path": "configs/stage3_cover_rel_gate_nollm.yaml",
-      "accessCount": 4,
-      "lastAccessed": 1778856792972,
-      "type": "file"
-    },
-    {
-      "path": "scripts/run_grid_sweep.py",
-      "accessCount": 3,
-      "lastAccessed": 1778831371303,
-      "type": "file"
-    },
-    {
-      "path": "utils/paths.py",
-      "accessCount": 3,
-      "lastAccessed": 1778853927644,
-      "type": "file"
-    },
-    {
-      "path": "models/base.py",
-      "accessCount": 3,
-      "lastAccessed": 1778854776660,
-      "type": "file"
-    },
-    {
-      "path": "configs/stage3_cover_rel_judge_yelpchi.yaml",
-      "accessCount": 3,
-      "lastAccessed": 1778854788206,
-      "type": "file"
-    },
-    {
-      "path": "configs/yelpchi_gcn.yaml",
-      "accessCount": 3,
-      "lastAccessed": 1778855177550,
-      "type": "file"
-    },
-    {
-      "path": "configs/sweeps/yelpchi_gcn_grid.yaml",
-      "accessCount": 2,
-      "lastAccessed": 1778836588961,
-      "type": "file"
-    },
-    {
-      "path": "configs/sweeps/amazon_gcn_grid.yaml",
-      "accessCount": 2,
-      "lastAccessed": 1778836589381,
-      "type": "file"
-    },
-    {
-      "path": "configs/sweeps/yelpchi_sage_grid.yaml",
-      "accessCount": 2,
-      "lastAccessed": 1778836589756,
-      "type": "file"
-    },
-    {
-      "path": "configs/sweeps/amazon_sage_grid.yaml",
-      "accessCount": 2,
-      "lastAccessed": 1778836590176,
-      "type": "file"
-    },
-    {
-      "path": "configs/sweeps/yelpchi_gat_grid.yaml",
-      "accessCount": 2,
-      "lastAccessed": 1778836590615,
-      "type": "file"
-    },
-    {
-      "path": "configs/sweeps/amazon_gat_grid.yaml",
-      "accessCount": 2,
-      "lastAccessed": 1778836591082,
-      "type": "file"
-    },
-    {
-      "path": "scripts/retrain_baseline.py",
-      "accessCount": 2,
-      "lastAccessed": 1778840475466,
-      "type": "file"
-    },
-    {
-      "path": "configs/stage3_cover_rel_judge_amazon.yaml",
-      "accessCount": 2,
-      "lastAccessed": 1778849746007,
-      "type": "file"
-    },
-    {
-      "path": "utils/tensorboard.py",
       "accessCount": 1,
-      "lastAccessed": 1778830719265,
-      "type": "file"
-    },
-    {
-      "path": "data/split.py",
-      "accessCount": 1,
-      "lastAccessed": 1778830719416,
-      "type": "file"
-    },
-    {
-      "path": "scripts/run_dual_gpu_sanity.py",
-      "accessCount": 1,
-      "lastAccessed": 1778830719495,
-      "type": "file"
-    },
-    {
-      "path": "configs/sweeps/_smoke_yelpchi_bwgnn.yaml",
-      "accessCount": 1,
-      "lastAccessed": 1778831026383,
-      "type": "file"
-    },
-    {
-      "path": "scripts/run_gpu3_baseline_chain.sh",
-      "accessCount": 1,
-      "lastAccessed": 1778831135789,
-      "type": "file"
-    },
-    {
-      "path": "scripts/monitor_sweeps.py",
-      "accessCount": 1,
-      "lastAccessed": 1778831249365,
-      "type": "file"
-    },
-    {
-      "path": "scripts/aggregate_sweep_report.py",
-      "accessCount": 1,
-      "lastAccessed": 1778831249823,
-      "type": "file"
-    },
-    {
-      "path": "scripts/run_sensitivity_analysis.py",
-      "accessCount": 1,
-      "lastAccessed": 1778831432845,
-      "type": "file"
-    },
-    {
-      "path": "scripts/run_bwgnn_ablations.py",
-      "accessCount": 1,
-      "lastAccessed": 1778831473995,
-      "type": "file"
-    },
-    {
-      "path": "scripts/auto_chain_sensitivity_ablations.py",
-      "accessCount": 1,
-      "lastAccessed": 1778831873940,
-      "type": "file"
-    },
-    {
-      "path": "scripts/audit_fresh_stage1.py",
-      "accessCount": 1,
-      "lastAccessed": 1778836524455,
-      "type": "file"
-    },
-    {
-      "path": "scripts/repro_bwgnn_stage1.sh",
-      "accessCount": 1,
-      "lastAccessed": 1778837034393,
-      "type": "file"
-    },
-    {
-      "path": "docs/cover_guide.md",
-      "accessCount": 1,
-      "lastAccessed": 1778837824125,
-      "type": "file"
-    },
-    {
-      "path": "scripts/retrain_bwgnn_baseline.sh",
-      "accessCount": 1,
-      "lastAccessed": 1778837845722,
-      "type": "file"
-    },
-    {
-      "path": "scripts/generate_llm_judge.py",
-      "accessCount": 1,
-      "lastAccessed": 1778837858316,
-      "type": "file"
-    },
-    {
-      "path": "configs/stage3_cover_rel_nollm.yaml",
-      "accessCount": 1,
-      "lastAccessed": 1778837858379,
-      "type": "file"
-    },
-    {
-      "path": "artifacts/results/yelpchi/bwgnn/base/seed_42/stage1_metrics.json",
-      "accessCount": 1,
-      "lastAccessed": 1778837902771,
-      "type": "file"
-    },
-    {
-      "path": "artifacts/relation_features/yelpchi/bwgnn/seed_42/all/rel_feature_meta.json",
-      "accessCount": 1,
-      "lastAccessed": 1778837902833,
-      "type": "file"
-    },
-    {
-      "path": "artifacts/results/amazon/bwgnn/base/seed_42/stage1_metrics.json",
-      "accessCount": 1,
-      "lastAccessed": 1778837902886,
-      "type": "file"
-    },
-    {
-      "path": "artifacts/judge_packets/yelpchi/bwgnn/cover_rel_judge/seed_42/judge_stats.json",
-      "accessCount": 1,
-      "lastAccessed": 1778837902976,
-      "type": "file"
-    },
-    {
-      "path": "artifacts/tables/paper_main_results.md",
-      "accessCount": 1,
-      "lastAccessed": 1778838045295,
-      "type": "file"
-    },
-    {
-      "path": "scripts/run_stage2_rule.sh",
-      "accessCount": 1,
-      "lastAccessed": 1778842476862,
+      "lastAccessed": 1778928208599,
       "type": "file"
     }
   ]
