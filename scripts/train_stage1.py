@@ -80,6 +80,13 @@ def main():
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--run_name", type=str, default="base")
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--epochs", type=int, default=None,
+                        help="Override training epochs from config (e.g. for compute-matched base saturation analysis).")
+    parser.add_argument("--patience", type=int, default=None,
+                        help="Override early-stopping patience (set to >= epochs to disable).")
+    parser.add_argument("--select_metric", type=str, default=None,
+                        choices=["roc_auc", "auprc", "macro_f1", "f1", "g_means"],
+                        help="Override metric used to select the best checkpoint.")
     parser.add_argument("--stratified", action="store_true", help="Use stratified split")
     parser.add_argument("--deterministic", action="store_true",
                         help="Enable deterministic CUDA ops and save retraining_metrics.json")
@@ -133,6 +140,10 @@ def main():
         )
         epochs = config["train"]["epochs"]
 
+    if args.epochs is not None and not args.debug:
+        epochs = int(args.epochs)
+        print(f"[CLI-override] training epochs set to {epochs}")
+
     model_cfg = config["model"]
     extra_kwargs = {}
     if "attention_heads" in model_cfg:
@@ -153,7 +164,13 @@ def main():
     )
 
     patience = config["train"].get("patience", 50)
+    if args.patience is not None:
+        patience = int(args.patience)
+        print(f"[CLI-override] patience set to {patience}")
     select_metric = config["train"].get("select_metric", "roc_auc")
+    if args.select_metric is not None:
+        select_metric = args.select_metric
+        print(f"[CLI-override] select_metric set to {select_metric}")
     best_val_score = 0.0
     patience_counter = 0
     best_state = None

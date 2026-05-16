@@ -23,7 +23,7 @@ SEEDS = [42, 123, 456, 789, 2026]
 RELATION_RUNS = [
     (
         "phase2_amz_f1_drel10_tau18_trust1em2_lsp0_cuda",
-        "configs/phase2_amazon_E0_relgate.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E0_relgate.yaml",
         [
             "--use_judge", "0",
             "--alpha_max", "0",
@@ -40,7 +40,7 @@ RELATION_RUNS = [
     ),
     (
         "phase2_amz_f2_drel125_tau18_trust1em2_lsp0_cuda",
-        "configs/phase2_amazon_E0_relgate.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E0_relgate.yaml",
         [
             "--use_judge", "0",
             "--alpha_max", "0",
@@ -57,7 +57,7 @@ RELATION_RUNS = [
     ),
     (
         "phase2_amz_f3_drel10_tau25_trust1em2_lsp0_cuda",
-        "configs/phase2_amazon_E0_relgate.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E0_relgate.yaml",
         [
             "--use_judge", "0",
             "--alpha_max", "0",
@@ -74,7 +74,7 @@ RELATION_RUNS = [
     ),
     (
         "phase2_amz_f4_drel075_tau25_trust1em2_lsp0_cuda",
-        "configs/phase2_amazon_E0_relgate.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E0_relgate.yaml",
         [
             "--use_judge", "0",
             "--alpha_max", "0",
@@ -91,7 +91,7 @@ RELATION_RUNS = [
     ),
     (
         "phase2_amz_f5_drel10_tau13_trust1em2_lsp0_cuda",
-        "configs/phase2_amazon_E0_relgate.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E0_relgate.yaml",
         [
             "--use_judge", "0",
             "--alpha_max", "0",
@@ -108,7 +108,7 @@ RELATION_RUNS = [
     ),
     (
         "phase2_amz_f6_drel075_tau13_trust1em2_lsp0_cuda",
-        "configs/phase2_amazon_E0_relgate.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E0_relgate.yaml",
         [
             "--use_judge", "0",
             "--alpha_max", "0",
@@ -125,7 +125,7 @@ RELATION_RUNS = [
     ),
     (
         "phase2_amz_f7_drel10_tau18_trust3em2_lsp0_cuda",
-        "configs/phase2_amazon_E0_relgate.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E0_relgate.yaml",
         [
             "--use_judge", "0",
             "--alpha_max", "0",
@@ -142,7 +142,7 @@ RELATION_RUNS = [
     ),
     (
         "phase2_amz_f8_drel15_tau25_trust5em2_lr1em4_cuda",
-        "configs/phase2_amazon_E0_relgate.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E0_relgate.yaml",
         [
             "--use_judge", "0",
             "--alpha_max", "0",
@@ -163,42 +163,42 @@ RELATION_RUNS = [
 JUDGE_RUNS = [
     (
         "phase2_amz_j1_drel075_align3em3_alpha0_cuda",
-        "configs/phase2_amazon_E1_judge_align.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E1_judge_align.yaml",
         ["--delta_rel_max", "0.75", "--lambda_align", "3.0e-3", "--alpha_max", "0"],
     ),
     (
         "phase2_amz_j2_drel075_align1em2_alpha0_cuda",
-        "configs/phase2_amazon_E1_judge_align.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E1_judge_align.yaml",
         ["--delta_rel_max", "0.75", "--lambda_align", "1.0e-2", "--alpha_max", "0"],
     ),
     (
         "phase2_amz_j3_drel10_align3em3_alpha0_cuda",
-        "configs/phase2_amazon_E1_judge_align.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E1_judge_align.yaml",
         ["--delta_rel_max", "1.0", "--lambda_align", "3.0e-3", "--alpha_max", "0"],
     ),
     (
         "phase2_amz_j4_drel10_align1em2_alpha0_cuda",
-        "configs/phase2_amazon_E1_judge_align.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E1_judge_align.yaml",
         ["--delta_rel_max", "1.0", "--lambda_align", "1.0e-2", "--alpha_max", "0"],
     ),
     (
         "phase2_amz_j5_drel075_align3em3_alpha005_cuda",
-        "configs/phase2_amazon_E2_judge_residual.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E2_judge_residual.yaml",
         ["--delta_rel_max", "0.75", "--lambda_align", "3.0e-3", "--alpha_max", "0.05"],
     ),
     (
         "phase2_amz_j6_drel10_align3em3_alpha005_cuda",
-        "configs/phase2_amazon_E2_judge_residual.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E2_judge_residual.yaml",
         ["--delta_rel_max", "1.0", "--lambda_align", "3.0e-3", "--alpha_max", "0.05"],
     ),
     (
         "phase2_amz_j7_drel075_align1em2_alpha005_cuda",
-        "configs/phase2_amazon_E2_judge_residual.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E2_judge_residual.yaml",
         ["--delta_rel_max", "0.75", "--lambda_align", "1.0e-2", "--alpha_max", "0.05"],
     ),
     (
         "phase2_amz_j8_drel10_align1em2_alpha005_cuda",
-        "configs/phase2_amazon_E2_judge_residual.yaml",
+        "configs/cover-rel-gj/phase2_ablations/phase2_amazon_E2_judge_residual.yaml",
         ["--delta_rel_max", "1.0", "--lambda_align", "1.0e-2", "--alpha_max", "0.05"],
     ),
 ]
@@ -212,6 +212,27 @@ JUDGE_COMMON = [
     "--patience", "50",
     "--early_stop_metric", "val_auprc",
     "--eval_interval", "1",
+]
+
+YELPSTYLE_RUNS = [
+    (
+        "phase2_amz_yelpstyle_lalign1em2_alpha0_cuda_tb",
+        "configs/phase2_reasoner/phase2_amazon_yelpstyle_judge_align.yaml",
+        [
+            "--use_judge", "1",
+            "--alpha_max", "0",
+            "--lambda_align", "1.0e-2",
+            "--lambda_trust", "3.0e-3",
+            "--lambda_sparse", "1.0e-3",
+            "--delta_rel_max", "2.0",
+            "--delta_llm_max", "0.75",
+            "--tau_gate", "0.7",
+            "--lr", "1.0e-3",
+            "--patience", "50",
+            "--early_stop_metric", "val_auprc",
+            "--eval_interval", "1",
+        ],
+    ),
 ]
 
 
@@ -298,8 +319,7 @@ def run_train(
     validate_cuda_diagnostics(run_name, seed, device)
 
 
-def aggregate(runs: list[str], seeds: list[int]) -> None:
-    out_prefix = "artifacts/tables/amazon_phase2_focused_cuda"
+def aggregate(runs: list[str], seeds: list[int], out_prefix: str) -> None:
     cmd = [
         sys.executable,
         "scripts/aggregate_phase2_custom_runs.py",
@@ -322,7 +342,7 @@ def main() -> int:
     parser.add_argument("--seeds", type=int, nargs="+", default=SEEDS)
     parser.add_argument(
         "--mode",
-        choices=["relation", "judge", "all"],
+        choices=["relation", "judge", "yelpstyle", "all"],
         default="all",
     )
     parser.add_argument("--start-index", type=int, default=0)
@@ -335,11 +355,15 @@ def main() -> int:
     log_path = Path(args.log)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     runs: list[tuple[str, str, list[str]]] = []
+    out_prefix = "artifacts/tables/amazon_phase2_focused_cuda"
     if args.mode in {"relation", "all"}:
         runs.extend(RELATION_RUNS)
     if args.mode in {"judge", "all"}:
         for run_name, config, specific_args in JUDGE_RUNS:
             runs.append((run_name, config, [*JUDGE_COMMON, *specific_args]))
+    if args.mode == "yelpstyle":
+        runs.extend(YELPSTYLE_RUNS)
+        out_prefix = "artifacts/tables/amazon_phase2_yelpstyle_cuda_tb"
     selected = runs[args.start_index : args.stop_index]
 
     for seed in args.seeds:
@@ -354,7 +378,7 @@ def main() -> int:
                 log_path=log_path,
             )
 
-    aggregate([run_name for run_name, _, _ in runs], args.seeds)
+    aggregate([run_name for run_name, _, _ in runs], args.seeds, out_prefix)
     return 0
 
 

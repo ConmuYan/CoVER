@@ -8,9 +8,9 @@ mkdir -p "$ROOT/artifacts/sweeps/_drivers"
 LOG="$ROOT/artifacts/sweeps/_drivers/judge_${DATASET}_gpu${GPU}.log"
 cd "$ROOT"
 if [ "$DATASET" = "yelpchi" ]; then
-  CFG="configs/stage3_cover_rel_judge_yelpchi.yaml"
+  CFG="configs/cover-rel-gj/stage3_legacy/stage3_cover_rel_judge_yelpchi.yaml"
 elif [ "$DATASET" = "amazon" ]; then
-  CFG="configs/stage3_cover_rel_judge_amazon.yaml"
+  CFG="configs/cover-rel-gj/stage3_legacy/stage3_cover_rel_judge_amazon.yaml"
 fi
 echo "[judge] start $(date -Is) dataset=$DATASET gpu=$GPU seeds=$*" >> "$LOG"
 for SEED in "$@"; do

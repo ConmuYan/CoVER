@@ -10,7 +10,7 @@ DATASET="$1"; shift
 EXP="$1"; shift
 GPU="$1"; shift
 
-CFG="configs/phase2_${DATASET}_sage_${EXP}.yaml"
+CFG="configs/cover-rel-gj/phase2_ablations/phase2_${DATASET}_sage_${EXP}.yaml"
 if [ ! -f "$ROOT/$CFG" ]; then
   echo "Config not found: $ROOT/$CFG"
   exit 3

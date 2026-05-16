@@ -18,7 +18,7 @@ case "$EXP" in
   *) echo "Unknown experiment: $EXP"; exit 2 ;;
 esac
 
-CFG="configs/phase2_${DATASET}_${EXP}_${NAME}.yaml"
+CFG="configs/cover-rel-gj/phase2_ablations/phase2_${DATASET}_${EXP}_${NAME}.yaml"
 if [ ! -f "$ROOT/$CFG" ]; then
   echo "Config not found: $ROOT/$CFG"
   exit 3

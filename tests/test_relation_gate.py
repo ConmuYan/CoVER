@@ -145,7 +145,7 @@ def test_gate_stats_are_saved(tmp_path):
 
 
 def test_gate_config_keeps_stage3_llm_free():
-    config = yaml.safe_load(Path("configs/stage3_cover_rel_gate_nollm.yaml").read_text())
+    config = yaml.safe_load(Path("configs/cover-rel-gj/stage3_legacy/stage3_cover_rel_gate_nollm.yaml").read_text())
     reasoner = config["reasoner"]
 
     assert reasoner["use_teacher_latents"] is False

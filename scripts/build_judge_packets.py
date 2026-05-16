@@ -140,7 +140,7 @@ def compute_gate_values(config: dict[str, Any], stage3_config: dict[str, Any], d
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/stage3_cover_rel_gate_nollm.yaml")
+    parser.add_argument("--config", default="configs/cover-rel-gj/stage3_legacy/stage3_cover_rel_gate_nollm.yaml")
     parser.add_argument("--gate_run_name", default="cover_rel_anchor_gate_nollm")
     parser.add_argument("--output_run_name", default="cover_rel_judge")
     parser.add_argument("--seed", type=int, default=None)

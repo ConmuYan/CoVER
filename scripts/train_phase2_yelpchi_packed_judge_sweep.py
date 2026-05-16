@@ -700,7 +700,7 @@ def train_seed(seed: int, args: argparse.Namespace) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/phase2_yelpchi_E2_judge_residual.yaml")
+    parser.add_argument("--config", default="configs/cover-rel-gj/phase2_ablations/phase2_yelpchi_E2_judge_residual.yaml")
     parser.add_argument("--seeds", type=int, nargs="+", default=SEEDS)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--epochs", type=int, default=300)

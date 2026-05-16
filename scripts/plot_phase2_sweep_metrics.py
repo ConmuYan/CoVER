@@ -86,6 +86,37 @@ SUITES = {
             ),
         ],
     },
+    "amazon_focused_cuda": {
+        "dataset": "Amazon",
+        "groups": [
+            (
+                "Relation residual regime",
+                [
+                    ("d=1.0 tau=1.8", "phase2_amz_f1_drel10_tau18_trust1em2_lsp0_cuda"),
+                    ("d=1.25 tau=1.8", "phase2_amz_f2_drel125_tau18_trust1em2_lsp0_cuda"),
+                    ("d=1.0 tau=2.5", "phase2_amz_f3_drel10_tau25_trust1em2_lsp0_cuda"),
+                    ("d=0.75 tau=2.5", "phase2_amz_f4_drel075_tau25_trust1em2_lsp0_cuda"),
+                    ("d=1.0 tau=1.3", "phase2_amz_f5_drel10_tau13_trust1em2_lsp0_cuda"),
+                    ("d=0.75 tau=1.3", "phase2_amz_f6_drel075_tau13_trust1em2_lsp0_cuda"),
+                    ("trust=3e-2", "phase2_amz_f7_drel10_tau18_trust3em2_lsp0_cuda"),
+                    ("lr=1e-4", "phase2_amz_f8_drel15_tau25_trust5em2_lr1em4_cuda"),
+                ],
+            ),
+            (
+                "Judge alignment and residual",
+                [
+                    ("d=.75 a=3e-3", "phase2_amz_j1_drel075_align3em3_alpha0_cuda"),
+                    ("d=.75 a=1e-2", "phase2_amz_j2_drel075_align1em2_alpha0_cuda"),
+                    ("d=1 a=3e-3", "phase2_amz_j3_drel10_align3em3_alpha0_cuda"),
+                    ("d=1 a=1e-2", "phase2_amz_j4_drel10_align1em2_alpha0_cuda"),
+                    ("d=.75 res", "phase2_amz_j5_drel075_align3em3_alpha005_cuda"),
+                    ("d=1 res", "phase2_amz_j6_drel10_align3em3_alpha005_cuda"),
+                    ("d=.75 res hi", "phase2_amz_j7_drel075_align1em2_alpha005_cuda"),
+                    ("d=1 res hi", "phase2_amz_j8_drel10_align1em2_alpha005_cuda"),
+                ],
+            ),
+        ],
+    },
 }
 
 

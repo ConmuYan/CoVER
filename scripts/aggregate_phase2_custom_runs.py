@@ -22,12 +22,21 @@ DEFAULT_SEEDS = [42, 123, 456, 789, 2026]
 METRICS = ["auprc", "roc_auc", "macro_f1", "g_means"]
 DIAG_KEYS = [
     "mean_abs_delta_rel",
+    "mean_intervention",
+    "mean_intervention_judge_accepted",
+    "mean_intervention_judge_rejected",
+    "mean_intervention_base_correct",
+    "mean_intervention_base_wrong",
+    "mean_abs_alpha_delta_llm",
+    "mean_abs_alpha_delta_llm_accepted",
+    "mean_abs_alpha_delta_llm_rejected",
     "mean_alpha_llm",
     "mean_alpha_llm_accepted",
     "mean_alpha_llm_rejected",
     "max_abs_alpha_llm_rejected",
     "mean_gate_entropy",
     "mean_dominance_rho",
+    "gate_key_agreement",
     "gate_weight_rel_0",
     "gate_weight_rel_1",
     "gate_weight_rel_2",
@@ -133,22 +142,24 @@ def write_md(summary: list[dict], path: Path) -> None:
     lines = [
         "# Phase2 Custom Run Summary",
         "",
-        "| run_name | n | AUPRC | ROC-AUC | Macro-F1 | G-Means | mean_abs_delta_rel | alpha | gate_H | gate_0 | gate_1 | gate_2 | rejected_alpha_max |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| run_name | n | AUPRC | ROC-AUC | Macro-F1 | G-Means | intervention | alpha | alpha*d_llm | gate_H | gate_key_agree | gate_0 | gate_1 | gate_2 | rejected_alpha_max |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in summary:
         lines.append(
             "| {run} | {n} | {ap} +/- {ap_s} | {auc} +/- {auc_s} | {mf1} +/- {mf1_s} | "
-            "{gm} +/- {gm_s} | {dr} | {alpha} | {gh} | {g0} | {g1} | {g2} | {rej} |".format(
+            "{gm} +/- {gm_s} | {interv} | {alpha} | {aj} | {gh} | {agree} | {g0} | {g1} | {g2} | {rej} |".format(
                 run=row["run_name"],
                 n=row["n_seeds_present"],
                 ap=fmt(row.get("auprc_mean")), ap_s=fmt(row.get("auprc_std")),
                 auc=fmt(row.get("roc_auc_mean")), auc_s=fmt(row.get("roc_auc_std")),
                 mf1=fmt(row.get("macro_f1_mean")), mf1_s=fmt(row.get("macro_f1_std")),
                 gm=fmt(row.get("g_means_mean")), gm_s=fmt(row.get("g_means_std")),
-                dr=fmt(row.get("mean_abs_delta_rel_mean")),
+                interv=fmt(row.get("mean_intervention_mean")),
                 alpha=fmt(row.get("mean_alpha_llm_mean")),
+                aj=fmt(row.get("mean_abs_alpha_delta_llm_mean")),
                 gh=fmt(row.get("mean_gate_entropy_mean")),
+                agree=fmt(row.get("gate_key_agreement_mean")),
                 g0=fmt(row.get("gate_weight_rel_0_mean")),
                 g1=fmt(row.get("gate_weight_rel_1_mean")),
                 g2=fmt(row.get("gate_weight_rel_2_mean")),

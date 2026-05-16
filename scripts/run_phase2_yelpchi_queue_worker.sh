@@ -19,8 +19,8 @@ export NUMEXPR_NUM_THREADS="${NUMEXPR_NUM_THREADS:-1}"
 export COVER_NUM_THREADS="${COVER_NUM_THREADS:-1}"
 export COVER_INTEROP_THREADS="${COVER_INTEROP_THREADS:-1}"
 
-CFG_E0="configs/phase2_yelpchi_E0_relgate.yaml"
-CFG_E2="configs/phase2_yelpchi_E2_judge_residual.yaml"
+CFG_E0="configs/cover-rel-gj/phase2_ablations/phase2_yelpchi_E0_relgate.yaml"
+CFG_E2="configs/cover-rel-gj/phase2_ablations/phase2_yelpchi_E2_judge_residual.yaml"
 RESULT_ROOT="artifacts/results/yelpchi/bwgnn"
 LOCK_ROOT="artifacts/sweeps/locks/yelpchi_phase2_targeted"
 

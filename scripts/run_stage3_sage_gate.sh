@@ -9,7 +9,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATASET="$1"; shift
 GPU="$1"; shift
 
-CFG="configs/stage3_cover_rel_${DATASET}_sage_nollm.yaml"
+CFG="configs/cover-rel-gj/stage3_legacy/stage3_cover_rel_${DATASET}_sage_nollm.yaml"
 if [ ! -f "$ROOT/$CFG" ]; then
   echo "Config not found: $ROOT/$CFG"
   exit 3

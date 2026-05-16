@@ -18,8 +18,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GPU="$1"; shift
 SEEDS=("$@")
 PY="${PYTHON:-/data1/mq/conda_envs/gread-core/bin/python}"
-CFG="configs/phase2_amazon_E0_relgate.yaml"
-JCFG="configs/phase2_amazon_E2_judge_residual.yaml"
+CFG="configs/cover-rel-gj/phase2_ablations/phase2_amazon_E0_relgate.yaml"
+JCFG="configs/cover-rel-gj/phase2_ablations/phase2_amazon_E2_judge_residual.yaml"
 
 cd "$ROOT" || exit 1
 mkdir -p artifacts/sweeps/_drivers

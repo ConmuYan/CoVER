@@ -324,7 +324,7 @@ def write_report(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/stage3_cover_rel_amazon_nollm.yaml")
+    parser.add_argument("--config", default="configs/cover-rel-gj/stage3_legacy/stage3_cover_rel_amazon_nollm.yaml")
     parser.add_argument("--seeds", nargs="+", type=int, default=DEFAULT_SEEDS)
     parser.add_argument(
         "--runs",
