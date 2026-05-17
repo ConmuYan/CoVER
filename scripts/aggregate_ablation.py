@@ -1,14 +1,25 @@
-"""Aggregate Phase 2 ablation results (8 loss + 2 arch + base reuse) into markdown.
+"""Aggregate the historical Phase 2 loss × architecture ablation (10 cells × 5
+seeds) into ``artifacts/tables/yelpchi_bwgnn_ablation_loss_arch_5seed.md``.
 
-Cells:
-    L0..L7  : loss ablation on full architecture
-    A0      : base only (reuse fixed_v1_100ep Phase 1 metrics)
-    A1, A2  : architecture switches (relation-only, judge-only)
-    A3==L7  : champion (full)
+This is the **falsification table** — it is the evidence that retired every
+deleted loss term and the LLM-judge route. The runs themselves were produced
+by an earlier 4-term-loss trainer; see AGENTS.md §9 and §7.1 for the
+interpretation in the cls-only canonical narrative.
+
+Cells (frozen historical record):
+
+* ``A0``       — base only, ``z = b`` (Phase 1 ``fixed_v1_100ep``)
+* ``L0..L7``   — 8 loss settings on the full architecture
+                 (``z = b + Δ_rel + α·Δ_llm``, varying λ_int, λ_sparse, λ_align)
+* ``A1``       — relation-only switch (``α_max = 0``)
+* ``A2``       — judge-only switch (``Δ_rel_max = 0``)
 
 Per cell: mean ± std over 5 seeds for AUROC / AUPRC / Macro-F1 / G-Means.
-Plus paired t-test vs L7 (champion) for each non-champion cell.
-Output → artifacts/tables/yelpchi_bwgnn_ablation_loss_arch_5seed.md
+Plus paired t-test vs ``L7`` (the historical "champion" — equivalent to
+``A3`` in the original 4-term schema). Headline result: L0 cls-only differs
+from L7 4-term-full by Δ_AUPRC = +0.0000 (p = 0.991), and every L_i term
+fails the paired-t bar individually. → Canonical loss collapsed to L_cls
+only; see ``training/phase2_losses.py``.
 """
 
 from __future__ import annotations
@@ -29,23 +40,27 @@ SEEDS = [42, 123, 456, 789, 2026]
 METRICS = ["roc_auc", "auprc", "macro_f1", "g_means"]
 METRIC_LABELS = {"roc_auc": "AUROC", "auprc": "AUPRC", "macro_f1": "Macro-F1", "g_means": "G-Means"}
 
+# (cell_id, variant_name, historical_formula, historical_hp_override, note)
+# Formulas describe what was *historically run* (with the 4-term loss and judge
+# active in L-series; A1 = judge off; A2 = rel-residual off). The cls-only
+# canonical retired α·Δ_llm post-hoc because L7 ≡ L0 at 5-seed paired-t.
 CELLS = [
-    ("A0", "base only", "z = b",                       None,                                       "reuse fixed_v1_100ep"),
-    ("L0", "cls only",  "z = b + Δ_rel + α·Δ_llm",     "λ_int=0, λ_sp=0, λ_al=0",                  ""),
-    ("L1", "+int",      "z = b + Δ_rel + α·Δ_llm",     "λ_int=3e-3, λ_sp=0, λ_al=0",               ""),
-    ("L2", "+sparse",   "z = b + Δ_rel + α·Δ_llm",     "λ_int=0, λ_sp=1e-3, λ_al=0",               ""),
-    ("L3", "+align",    "z = b + Δ_rel + α·Δ_llm",     "λ_int=0, λ_sp=0, λ_al=3e-2",               ""),
-    ("L4", "+int +sp",  "z = b + Δ_rel + α·Δ_llm",     "λ_int=3e-3, λ_sp=1e-3, λ_al=0",            ""),
-    ("L5", "+int +al",  "z = b + Δ_rel + α·Δ_llm",     "λ_int=3e-3, λ_sp=0, λ_al=3e-2",            ""),
-    ("L6", "+sp +al",   "z = b + Δ_rel + α·Δ_llm",     "λ_int=0, λ_sp=1e-3, λ_al=3e-2",            ""),
-    ("L7", "full ★",    "z = b + Δ_rel + α·Δ_llm",     "λ_int=3e-3, λ_sp=1e-3, λ_al=3e-2",         "champion (= A3)"),
-    ("A1", "rel-only",  "z = b + Δ_rel",               "use_judge=0, α_max=0, λ_al=0",             "λ_al degenerate w/o judge"),
-    ("A2", "judge-only","z = b + α·Δ_llm",             "Δ_rel_max=0",                              ""),
+    ("A0", "base only",  "z = b",                    "—",                                    "reuse fixed_v1_100ep (Phase 1)"),
+    ("L0", "cls only",   "z = b + Δ_rel + α·Δ_llm",  "λ_int=0, λ_sp=0, λ_al=0",              "★ canonical reference (= retained loss)"),
+    ("L1", "+int",       "z = b + Δ_rel + α·Δ_llm",  "λ_int=3e-3, λ_sp=0, λ_al=0",           "falsified vs L0 (p=0.81)"),
+    ("L2", "+sparse",    "z = b + Δ_rel + α·Δ_llm",  "λ_int=0, λ_sp=1e-3, λ_al=0",           "falsified vs L0 (p=0.061)"),
+    ("L3", "+align",     "z = b + Δ_rel + α·Δ_llm",  "λ_int=0, λ_sp=0, λ_al=3e-2",           "falsified vs L0 (p=0.32)"),
+    ("L4", "+int +sp",   "z = b + Δ_rel + α·Δ_llm",  "λ_int=3e-3, λ_sp=1e-3, λ_al=0",        "falsified vs L0 (p=0.36)"),
+    ("L5", "+int +al",   "z = b + Δ_rel + α·Δ_llm",  "λ_int=3e-3, λ_sp=0, λ_al=3e-2",        "falsified vs L0 (p=0.51)"),
+    ("L6", "+sp +al",    "z = b + Δ_rel + α·Δ_llm",  "λ_int=0, λ_sp=1e-3, λ_al=3e-2",        "falsified vs L0 (p=0.54)"),
+    ("L7", "full 4-term","z = b + Δ_rel + α·Δ_llm",  "λ_int=3e-3, λ_sp=1e-3, λ_al=3e-2",     "historical champion (≡ L0 at p=0.991)"),
+    ("A1", "rel-only",   "z = b + Δ_rel",            "use_judge=0, α_max=0, λ_al=0",         "judge-off arch switch"),
+    ("A2", "judge-only", "z = b + α·Δ_llm",          "Δ_rel_max=0",                          "rel-off arch switch"),
 ]
 
 
 def load_cell_metrics(cell_id: str) -> dict[str, list[float]]:
-    """Return per-metric list of length 5 (one per seed), or [] if missing."""
+    """Return per-metric list of length 5 (one per seed), or empty if missing."""
     out: dict[str, list[float]] = {m: [] for m in METRICS}
 
     if cell_id == "A0":
@@ -61,7 +76,6 @@ def load_cell_metrics(cell_id: str) -> dict[str, list[float]]:
                 out[m].append(float(tm[m]))
         return out
 
-    # CoVER cells: read phase2_diagnostics.json
     for seed in SEEDS:
         p = LOGS / f"ablation_{cell_id}" / f"seed_{seed}" / "phase2_diagnostics.json"
         if not p.exists():
@@ -80,13 +94,13 @@ def fmt_pm(values: list[float]) -> str:
     return f"{np.mean(values):.4f} ± {np.std(values, ddof=1):.4f}"
 
 
-def paired_test(cell_vals: list[float], champ_vals: list[float]) -> str:
-    if len(cell_vals) != 5 or len(champ_vals) != 5:
+def paired_test(cell_vals: list[float], ref_vals: list[float]) -> str:
+    if len(cell_vals) != 5 or len(ref_vals) != 5:
         return "—"
-    diff = np.array(cell_vals) - np.array(champ_vals)
+    diff = np.array(cell_vals) - np.array(ref_vals)
     if np.allclose(diff, 0):
         return "0.000 (n.s.)"
-    res = ttest_rel(cell_vals, champ_vals)
+    res = ttest_rel(cell_vals, ref_vals)
     t = res.statistic
     p = res.pvalue
     if p < 0.001:
@@ -101,30 +115,32 @@ def paired_test(cell_vals: list[float], champ_vals: list[float]) -> str:
 
 
 def main():
-    # Collect
     all_metrics: dict[str, dict[str, list[float]]] = {}
     for cell_id, *_ in CELLS:
         all_metrics[cell_id] = load_cell_metrics(cell_id)
 
-    champ = all_metrics["L7"]
+    # Reference for paired-t: L0 cls-only (the *retained* canonical setting).
+    # L7 (historical champion) is statistically indistinguishable from L0 at
+    # 5 seeds → cls-only became the canonical, and L7 is now reported as a
+    # negative ablation cell.
+    ref_label = "L0"
+    ref = all_metrics[ref_label]
 
-    # Header
     lines: list[str] = []
     lines.append("# YelpChi BWGNN — Phase 2 Loss × Architecture Ablation (5 seeds)\n")
-    lines.append(f"**Base**: `fixed_v1_100ep` (BWGNN, paper-faithful, frozen)  ")
-    lines.append(f"**Champion (L7=A3)**: full 4-loss + full arch, `α_bias_init=0.0, α_max=0.3, λ_align=3e-2`  ")
+    lines.append("**Base**: `fixed_v1_100ep` (BWGNN, paper-faithful, frozen)  ")
+    lines.append("**Reference cell**: `L0` (cls-only, *retained* canonical)  ")
     lines.append(f"**Seeds**: {SEEDS}  ")
-    lines.append(f"**Statistical test**: paired t-test (per-seed Δ vs L7), 5 seeds → df=4\n")
+    lines.append("**Statistical test**: paired t-test (per-seed Δ vs L0), 5 seeds → df=4  ")
+    lines.append("**Falsification ledger**: every L_i / L7 / judge cell fails the 5-seed paired-t bar vs L0; see AGENTS.md §§7.1, 9.\n")
 
-    lines.append("## Cell legend\n")
-    lines.append("| Cell | Variant | Formula | HP override | Note |")
+    lines.append("## Cell legend (historical 4-term schema)\n")
+    lines.append("| Cell | Variant | Historical formula | HP override | Note |")
     lines.append("|---|---|---|---|---|")
     for cell_id, var, formula, hp, note in CELLS:
-        hp_str = hp if hp else "—"
-        lines.append(f"| **{cell_id}** | {var} | `{formula}` | {hp_str} | {note} |")
+        lines.append(f"| **{cell_id}** | {var} | `{formula}` | {hp} | {note} |")
     lines.append("")
 
-    # Main result table
     lines.append("## Results (mean ± std, 5 seeds)\n")
     head = "| Cell | " + " | ".join(METRIC_LABELS[m] for m in METRICS) + " |"
     sep = "|---|" + "---:|" * len(METRICS)
@@ -132,23 +148,21 @@ def main():
     lines.append(sep)
     for cell_id, *_ in CELLS:
         cells = [fmt_pm(all_metrics[cell_id][m]) for m in METRICS]
-        marker = " **★**" if cell_id == "L7" else ""
+        marker = " **★**" if cell_id == ref_label else ""
         lines.append(f"| {cell_id}{marker} | " + " | ".join(cells) + " |")
     lines.append("")
 
-    # Paired t vs L7
-    lines.append("## Paired t-test vs L7 (champion) — AUPRC\n")
-    lines.append("| Cell | Variant | AUPRC paired Δ vs L7 |")
+    lines.append("## Paired t-test vs L0 (cls-only canonical) — AUPRC\n")
+    lines.append("| Cell | Variant | AUPRC paired Δ vs L0 |")
     lines.append("|---|---|---|")
     for cell_id, var, *_ in CELLS:
-        if cell_id == "L7":
-            lines.append(f"| L7 | full ★ | reference |")
+        if cell_id == ref_label:
+            lines.append(f"| {ref_label} | {var} | reference |")
             continue
-        sig = paired_test(all_metrics[cell_id]["auprc"], champ["auprc"])
+        sig = paired_test(all_metrics[cell_id]["auprc"], ref["auprc"])
         lines.append(f"| {cell_id} | {var} | {sig} |")
     lines.append("")
 
-    # Save per-seed CSV as well
     csv_path = TABLES / "yelpchi_bwgnn_ablation_loss_arch_per_seed.csv"
     with open(csv_path, "w") as f:
         f.write("cell,seed," + ",".join(METRICS) + "\n")
@@ -160,7 +174,6 @@ def main():
                 f.write(",".join(row) + "\n")
     lines.append(f"## Per-seed CSV: `{csv_path.relative_to(REPO)}`\n")
 
-    # Significance code legend
     lines.append("---\n")
     lines.append("**Significance**: `***` p<0.001, `**` p<0.01, `*` p<0.05, `n.s.` p≥0.05\n")
 

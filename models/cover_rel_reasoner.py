@@ -1,40 +1,47 @@
-"""Phase 2 unified CoVER-REL Reasoner — Phase 3 cleanup version.
+"""Phase 2 unified CoVER-REL Reasoner — cls-only canonical.
 
-Forward (rel-only, post-Commit-1 v2)::
+Forward (rel-only)::
 
-    z_i = b_i + Δ_rel_i
+    z_i = b_i + Δ_rel_i,   |Δ_rel_i| ≤ delta_rel_max
 
-The legacy additive judge path ``z_i += α_i · Δ_llm_i`` was removed in
-Commit 1 v2 (Phase 3 cleanup) after being falsified at 5 seeds
-(paired t = +0.03, p = 0.976 even with 120 → 2000 vLLM judge packets;
-see ``artifacts/tables/yelpchi_bwgnn_judge_revived_5seed.md``).
+This is the *only* CoVER-REL forward path. There is no LLM judge, no
+additive ``α·Δ_llm`` residual, no auxiliary signal injection. All
+regularisation is structural: bounded ``tanh`` saturation, zero-initialised
+per-relation residual heads, ``detach``-isolated base inputs, and
+independent (non-shared) per-relation expert MLPs.
 
 Where:
 
 * ``b_i = base_logit.detach()`` is the frozen base detector logit.
-* ``h_i,r = Expert_r(E_i,r)`` is the per-relation hidden produced by an MLP
-  expert from the 9-dim relation statistics ``E_i,r``.
+* ``h_{i,r} = Expert_r(E_{i,r})`` is a per-relation hidden vector produced
+  by an independent MLP expert from the 9-dim relation statistics
+  ``E_{i,r}`` (see ``evidence/relation_features.py``).
 * ``g_i = softmax(a_i / tau_gate, dim=-1)`` is a softmax-normalised schema
-  gate over the ``R`` relations (so ``Σ_r g_i,r = 1``).
-* ``u_i = Σ_r g_i,r · Head_r(h_i,r)`` mixes the per-relation scalar residual
-  contributions by the gate.
+  gate over the ``R`` relations (``Σ_r g_{i,r} = 1``).
+* ``u_i = Σ_r g_{i,r} · Head_r(h_{i,r})`` mixes the per-relation scalar
+  residuals by the gate; each ``Head_r`` is zero-initialised so the
+  starting point is ``Δ_rel ≡ 0`` (do-nothing baseline).
 * ``Δ_rel_i = delta_rel_max · tanh(u_i)`` is the bounded relation residual.
+
+See ``AGENTS.md`` §§3–7 for the full TPAMI-style derivation, including
+the 5-seed paired-t evidence that retired every deleted route
+(LLM judge, ``L_intervention``, ``L_sparse``, ``L_align``, CV-SCD,
+CoVER-DIR, CoVER-LIFT, LEQA, B3 PRTAE).
 
 Backward compatibility
 ----------------------
 
-The ``__init__`` and ``forward`` signatures keep the old judge-related
+The ``__init__`` and ``forward`` signatures preserve the old judge-related
 keyword arguments (``use_judge``, ``judge_feature_dim``, ``alpha_max``,
-``delta_llm_max``, ``judge_features``, ``judge_mask``, ...) so that
-imports and rel-only Phase 2 configs continue to work without source
-changes.  When any of these is set to a non-default (judge-on) value,
-``__init__`` / ``forward`` raises ``NotImplementedError`` with a pointer
-to ``PHASE2_DEPRECATION_PLAN_CORRECTION.md``.  This is intentional
-"broken-but-explicit" behaviour for the legacy judge code paths.
+``delta_llm_max``, ``judge_features``, ``judge_mask``, ...) so legacy
+configs and call sites that still pass the *off* defaults continue to load.
+Any *judge-on* configuration raises ``NotImplementedError`` immediately —
+the route was falsified at 5 seeds (paired t = +0.03, p = 0.976; see
+``artifacts/tables/paper_negative_routes.md``).
 
 The output dict still contains ``alpha_llm``, ``delta_llm``, and
-``judge_used_mask`` as zero / False tensors so downstream diagnostics
-code does not break with ``KeyError``.
+``judge_used_mask`` as zero / False tensors so any downstream diagnostic
+code that reads them keeps working without ``KeyError``.
 """
 
 from __future__ import annotations
@@ -46,10 +53,11 @@ from torch import Tensor
 
 
 _DEPRECATION_MSG = (
-    "Judge fusion path removed in Commit 1 v2 (Phase 3 cleanup). "
-    "Per RESEARCH_BRIEF.md §3.1 the α·Δ_llm additive residual was 5-seed "
-    "falsified (paired t = +0.03, p = 0.976). LEQA replacement coming in "
-    "Commit 2. See PHASE2_DEPRECATION_PLAN_CORRECTION.md."
+    "Judge fusion path is permanently removed from the canonical CoVER-REL. "
+    "The α·Δ_llm additive residual was 5-seed paired-t falsified "
+    "(t = +0.03, p = 0.976 with 2000 vLLM judge packets); LEQA and B3 PRTAE "
+    "follow-ups were equally null. See AGENTS.md §9 and "
+    "artifacts/tables/paper_negative_routes.md for the negative-route ledger."
 )
 
 
@@ -130,6 +138,11 @@ class CoVERRelReasoner(nn.Module):
         rel_dropout: float = 0.30,
         tau_gate: float = 0.7,
         delta_rel_max: float = 2.0,
+        # ----- Idea-1 ablation toggles (config-driven switches) -----
+        gate_mode: str = "softmax",
+        evidence_groups: list[str] | None = None,
+        expert_shared: bool = False,
+        residual_activation: str = "tanh",
         # ----- Deprecated noop kwargs (Commit 1 v2) -----
         use_judge: bool = False,
         judge_feature_dim: int = 0,
@@ -156,6 +169,26 @@ class CoVERRelReasoner(nn.Module):
                 f"anchor_relation={anchor!r} not in relation_names={rel_names}"
             )
 
+        # ----- Validate ablation toggles -----
+        if gate_mode not in ("softmax", "uniform"):
+            raise ValueError(
+                f"gate_mode must be 'softmax' or 'uniform', got {gate_mode!r}"
+            )
+        ev_groups = ["A", "B", "C"] if evidence_groups is None else [
+            str(g).upper() for g in evidence_groups
+        ]
+        for g in ev_groups:
+            if g not in {"A", "B", "C"}:
+                raise ValueError(
+                    f"evidence_groups must be a subset of ['A','B','C'], got {g!r}"
+                )
+        if not ev_groups:
+            raise ValueError("evidence_groups must contain at least one of A, B, C")
+        if residual_activation not in ("tanh", "identity"):
+            raise ValueError(
+                f"residual_activation must be 'tanh' or 'identity', got {residual_activation!r}"
+            )
+
         self.base_z_dim = int(base_z_dim)
         self.relation_names = rel_names
         self.anchor_relation = anchor
@@ -166,6 +199,28 @@ class CoVERRelReasoner(nn.Module):
         self.rel_dropout = float(rel_dropout)
         self.tau_gate = max(float(tau_gate), 1e-6)
         self.delta_rel_max = float(delta_rel_max)
+        self.gate_mode = gate_mode
+        self.evidence_groups = ev_groups
+        self.expert_shared = bool(expert_shared)
+        self.residual_activation = residual_activation
+
+        # ----- Evidence-group mask buffer (zeros the dropped-group dims) -----
+        # 9-dim per-relation layout:
+        #   A (structural)         : indices [0, 1, 2]
+        #   B (feature-neighbor)   : indices [3, 4, 5]
+        #   C (prototype-relative) : indices [6, 7, 8]
+        # If rel_stat_dim != 9, the mask becomes all-ones (no group semantics).
+        if self.rel_stat_dim == 9:
+            mask = torch.zeros(9, dtype=torch.float32)
+            if "A" in ev_groups:
+                mask[0:3] = 1.0
+            if "B" in ev_groups:
+                mask[3:6] = 1.0
+            if "C" in ev_groups:
+                mask[6:9] = 1.0
+        else:
+            mask = torch.ones(self.rel_stat_dim, dtype=torch.float32)
+        self.register_buffer("evidence_mask", mask, persistent=False)
 
         # ----- Backward-compat attributes (always read as judge-off) -----
         self.use_judge = False
@@ -180,19 +235,31 @@ class CoVERRelReasoner(nn.Module):
         self.head_llm = None
 
         # ----- Per-relation experts and scalar residual heads -----
-        self.relation_experts = nn.ModuleDict({
-            name: _make_relation_expert(
-                in_dim=self.rel_stat_dim,
+        # Independent (default) OR shared MLP with one-hot relation id input.
+        if self.expert_shared:
+            # Single MLP taking (E_{i,r} ; one-hot(r)) → h_{i,r}.
+            self.relation_experts = _make_relation_expert(
+                in_dim=self.rel_stat_dim + self.num_relations,
                 hidden_dim=self.rel_hidden_dim,
                 num_layers=self.rel_num_layers,
                 dropout=self.rel_dropout,
             )
-            for name in self.relation_names
-        })
-        self.relation_heads = nn.ModuleDict({
-            name: _make_relation_head(self.rel_hidden_dim)
-            for name in self.relation_names
-        })
+            # Shared scalar head (zero-init preserves do-nothing start).
+            self.relation_heads = _make_relation_head(self.rel_hidden_dim)
+        else:
+            self.relation_experts = nn.ModuleDict({
+                name: _make_relation_expert(
+                    in_dim=self.rel_stat_dim,
+                    hidden_dim=self.rel_hidden_dim,
+                    num_layers=self.rel_num_layers,
+                    dropout=self.rel_dropout,
+                )
+                for name in self.relation_names
+            })
+            self.relation_heads = nn.ModuleDict({
+                name: _make_relation_head(self.rel_hidden_dim)
+                for name in self.relation_names
+            })
 
         # ----- Softmax gate over R relations -----
         gate_in_dim = self.base_z_dim + self.num_relations * self.rel_hidden_dim
@@ -233,7 +300,7 @@ class CoVERRelReasoner(nn.Module):
                 fused_rel_h       (N, rel_hidden_dim)
                 relation_strength (N, R)          # |Head_r(h_i,r)| post-Head
         """
-        if judge_features is not None or judge_mask is not None:
+        if judge_features is not None or (judge_mask is not None and bool(judge_mask.any())):
             raise NotImplementedError(_DEPRECATION_MSG)
 
         if base_z.dim() != 2:
@@ -259,26 +326,54 @@ class CoVERRelReasoner(nn.Module):
                 f"{relation_features.shape[1]} != R*rel_stat_dim={expected_rel_dim}"
             )
         rel_feats = relation_features.to(device=device, dtype=dtype)
+        # ---- Evidence-group mask: zero-out dropped per-relation dims --------
+        mask_one = self.evidence_mask.to(device=device, dtype=dtype)
+        if mask_one.numel() == self.rel_stat_dim:
+            mask_full = mask_one.repeat(self.num_relations).view(1, -1)
+            rel_feats = rel_feats * mask_full
         chunks = torch.split(rel_feats, self.rel_stat_dim, dim=1)
 
         # h_i,r (per-relation hidden) and Head_r(h_i,r) (per-relation scalar)
         h_per_rel: list[Tensor] = []
         head_out_per_rel: list[Tensor] = []
-        for name, chunk in zip(self.relation_names, chunks):
-            h = self.relation_experts[name](chunk)            # (N, rel_hidden_dim)
-            h_per_rel.append(h)
-            head_out_per_rel.append(self.relation_heads[name](h).view(-1))  # (N,)
+        if self.expert_shared:
+            # Shared MLP with one-hot relation id appended to each chunk.
+            eye = torch.eye(self.num_relations, device=device, dtype=dtype)
+            for r_idx, (name, chunk) in enumerate(zip(self.relation_names, chunks)):
+                onehot = eye[r_idx].unsqueeze(0).expand(chunk.shape[0], -1)
+                augmented = torch.cat([chunk, onehot], dim=-1)
+                h = self.relation_experts(augmented)
+                h_per_rel.append(h)
+                head_out_per_rel.append(self.relation_heads(h).view(-1))
+        else:
+            for name, chunk in zip(self.relation_names, chunks):
+                h = self.relation_experts[name](chunk)            # (N, rel_hidden_dim)
+                h_per_rel.append(h)
+                head_out_per_rel.append(self.relation_heads[name](h).view(-1))  # (N,)
 
-        # ----- Schema gate g_i = softmax(a_i / tau_gate) -----
+        # ----- Schema gate g_i = softmax(a_i / tau_gate) (or uniform) -----
         all_h = torch.cat(h_per_rel, dim=-1)
-        gate_input = torch.cat([z_detached, all_h], dim=-1)
-        gate_logits = self.gate_logit_head(gate_input)
-        relation_gate = F.softmax(gate_logits / self.tau_gate, dim=-1)
+        if self.gate_mode == "uniform":
+            # Bypass gate net entirely: g_{i,r} = 1/R for all i, r.
+            relation_gate = torch.full(
+                (n, self.num_relations),
+                1.0 / float(self.num_relations),
+                device=device,
+                dtype=dtype,
+            )
+        else:
+            gate_input = torch.cat([z_detached, all_h], dim=-1)
+            gate_logits = self.gate_logit_head(gate_input)
+            relation_gate = F.softmax(gate_logits / self.tau_gate, dim=-1)
 
         # ----- Relation residual u_i = Σ_r g_i,r * Head_r(h_i,r) -----
         head_stack = torch.stack(head_out_per_rel, dim=1)
         u_i = (relation_gate * head_stack).sum(dim=-1)
-        delta_rel = self.delta_rel_max * torch.tanh(u_i)
+        if self.residual_activation == "identity":
+            # Unbounded ablation: Δ_rel = δ_max · u (still scaled, but linear).
+            delta_rel = self.delta_rel_max * u_i
+        else:
+            delta_rel = self.delta_rel_max * torch.tanh(u_i)
 
         # Gate-weighted fused expert hidden — used to condition downstream code
         # that previously consumed it (LEQA in Commit 2 will reuse this).

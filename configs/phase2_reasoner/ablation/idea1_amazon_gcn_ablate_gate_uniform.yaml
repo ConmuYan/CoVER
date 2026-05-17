@@ -1,0 +1,54 @@
+project: cover_fd
+dataset:
+  name: amazon
+  path: /data1/mq/codes/awesome-graph-anomaly-detection/cover-fd/datasets/Amazon.mat
+  format: mat
+  split_mode: supervised
+  train_ratio: 0.4
+  val_test_ratio: [1, 2]
+  scarcity_ratio: 1.0
+  stratified: true
+model:
+  name: gcn
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.3
+train:
+  seed: 0
+  epochs: 100
+  debug_epochs: 3
+  lr: 0.01
+  optimizer: adam
+  weight_decay: 0.0005
+  patience: 100
+  device: cuda:0
+  select_metric: auprc
+phase2_reasoner:
+  run_name: idea1_amazon_gcn_ablate_gate_uniform
+  two_stage: true
+  optimizer: adamw
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  epochs: 300
+  patience: 50
+  early_stop_metric: val_auprc
+  relation_names: ['UPU', 'USU', 'UVU']
+  anchor_relation: UVU
+  rel_hidden_dim: 64
+  rel_num_layers: 2
+  rel_dropout: 0.30
+  tau_gate: 0.7
+  evidence_tau: 1.5
+  delta_rel_max: 2.0
+  gate_mode: uniform
+  evidence_groups: [A, B, C]
+  expert_shared: false
+  residual_activation: tanh
+  use_judge: false
+  alpha_max: 0.0
+  lambda_int: 0.0
+  lambda_sparse: 0.0
+  lambda_align: 0.0
+  eval_interval: 1
+eval:
+  k_values: [50, 100, 200]

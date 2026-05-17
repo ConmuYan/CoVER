@@ -53,7 +53,7 @@ class TestNoJudgePath:
 
     def test_use_judge_true_raises(self):
         """Constructing with use_judge=True must raise NotImplementedError."""
-        with pytest.raises(NotImplementedError, match="Judge fusion path removed"):
+        with pytest.raises(NotImplementedError, match="Judge fusion path"):
             CoVERRelReasoner(
                 base_z_dim=64,
                 relation_names=["RUR", "RSR", "RTR"],
@@ -63,7 +63,7 @@ class TestNoJudgePath:
 
     def test_judge_features_not_none_raises(self, reasoner, dummy_inputs):
         """Passing judge_features != None to forward must raise."""
-        with pytest.raises(NotImplementedError, match="Judge fusion path removed"):
+        with pytest.raises(NotImplementedError, match="Judge fusion path"):
             reasoner(
                 **dummy_inputs,
                 judge_features=torch.randn(8, 32),

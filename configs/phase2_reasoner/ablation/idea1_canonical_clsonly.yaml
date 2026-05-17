@@ -1,0 +1,75 @@
+project: cover_fd
+
+# Idea-1 ablation baseline: cls-only canonical CoVER-REL.
+# Used as the paired-t reference for the two Idea-1 ablation configs:
+#   ablation/idea1_ablate_gate_uniform.yaml
+#   ablation/idea1_ablate_evidence_no_proto.yaml
+# All loss terms except L_cls are off (lambda_int=lambda_sparse=lambda_align=0
+# are silent deprecation no-ops in training/phase2_losses.py since 5-seed
+# paired-t showed all 4-term combinations indistinguishable from cls-only.
+# See artifacts/tables/yelpchi_bwgnn_ablation_loss_arch_5seed.md).
+
+dataset:
+  name: yelpchi
+  path: /data1/mq/codes/awesome-graph-anomaly-detection/cover-fd/datasets/YelpChi.mat
+  format: mat
+  split_mode: supervised
+  train_ratio: 0.4
+  val_test_ratio: [1, 2]
+  scarcity_ratio: 1.0
+  stratified: true
+
+model:
+  name: bwgnn
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.3
+  num_bands: 3
+  agg: concat
+
+train:
+  seed: 0
+  epochs: 100
+  debug_epochs: 3
+  lr: 0.01
+  optimizer: adam
+  weight_decay: 0.0005
+  patience: 100
+  device: cuda:0
+  select_metric: auprc
+
+phase2_reasoner:
+  run_name: idea1_canonical_clsonly
+  two_stage: true
+  optimizer: adamw
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  epochs: 300
+  patience: 50
+  early_stop_metric: val_auprc
+  relation_names: [RUR, RSR, RTR]
+  anchor_relation: RUR
+  rel_hidden_dim: 64
+  rel_num_layers: 2
+  rel_dropout: 0.30
+  tau_gate: 0.7
+  evidence_tau: 1.5
+  delta_rel_max: 2.0
+
+  # Idea-1 ablation toggles (canonical = all groups on, softmax gate)
+  gate_mode: softmax
+  evidence_groups: [A, B, C]
+
+  # Judge / LLM path fully off (cls-only canonical)
+  use_judge: false
+  alpha_max: 0.0
+
+  # Legacy loss-term weights kept at 0 (DeprecationWarning no-ops)
+  lambda_int: 0.0
+  lambda_sparse: 0.0
+  lambda_align: 0.0
+
+  eval_interval: 1
+
+eval:
+  k_values: [50, 100, 200]
