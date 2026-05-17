@@ -18,6 +18,9 @@ import os
 import sys
 from pathlib import Path
 
+# Make `models/` importable when invoked as a top-level script.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 logger = logging.getLogger(__name__)
 
 
@@ -87,6 +90,11 @@ def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
+    # Reduce CUDA memory fragmentation for the 4B-param model on 24GB cards.
+    os.environ.setdefault(
+        "PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True"
+    )
+
     # Lazy imports so script can be parsed without GPU
     from transformers import TrainingArguments, Trainer
     from models.lora_qwen_loader import (
@@ -118,12 +126,18 @@ def main():
         warmup_ratio=0.1,
         weight_decay=0.0,
         bf16=args.bf16,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         logging_steps=10,
         save_strategy="epoch",
         seed=args.seed,
         report_to="none",
         remove_unused_columns=False,
     )
+
+    # LoRA + gradient checkpointing needs inputs to require grads explicitly.
+    if hasattr(model, "enable_input_require_grads"):
+        model.enable_input_require_grads()
 
     trainer = Trainer(
         model=model,

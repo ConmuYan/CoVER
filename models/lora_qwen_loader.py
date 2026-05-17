@@ -14,6 +14,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import torch
+
 logger = logging.getLogger(__name__)
 
 # Default LoRA hyperparameters per FINAL_PROPOSAL.md section 3.2
@@ -70,8 +72,9 @@ def load_base_model_and_tokenizer(
 
     model = AutoModelForCausalLM.from_pretrained(
         base_model_path,
-        torch_dtype="bfloat16" if bf16 else "float32",
+        dtype=torch.bfloat16 if bf16 else torch.float32,
         device_map=device_map,
+        low_cpu_mem_usage=True,
         trust_remote_code=True,
     )
     logger.info(

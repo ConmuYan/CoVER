@@ -130,6 +130,11 @@ def parse_leqa_json(
 ) -> tuple[list[float], list[int]]:
     """Parse LEQA JSON output into per-token quality + reason lists.
 
+    Truncation-tolerant: if ``json.loads`` on the outer object fails
+    (vLLM hit ``max_new_tokens`` mid-JSON), fall back to a regex pass
+    that extracts every well-formed ``{"token":..,"q":..,"reason":..}``
+    sub-block individually.
+
     Returns:
         (q_list, reason_list) each of length len(token_names).
         Missing tokens get default_q=1.0 and default_reason="none".
@@ -140,26 +145,10 @@ def parse_leqa_json(
 
     token_to_idx = {name: i for i, name in enumerate(token_names)}
 
-    # Try to extract JSON from the text
-    json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-    if json_match is None:
-        return q_list, reason_list
-
-    try:
-        parsed = json.loads(json_match.group())
-    except json.JSONDecodeError:
-        return q_list, reason_list
-
-    entries = parsed.get("token_quality", [])
-    if not isinstance(entries, list):
-        return q_list, reason_list
-
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
+    def _apply_entry(entry: dict) -> None:
         token_name = str(entry.get("token", ""))
         if token_name not in token_to_idx:
-            continue
+            return
         idx = token_to_idx[token_name]
         q_val = entry.get("q", default_q)
         try:
@@ -168,10 +157,32 @@ def parse_leqa_json(
         except (ValueError, TypeError):
             q_val = default_q
         q_list[idx] = q_val
-
         reason = str(entry.get("reason", default_reason)).lower().strip()
         reason_list[idx] = LEQA_REASON_TO_ID.get(reason, 0)
 
+    # First try: full-JSON parse (greedy braces)
+    json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+    if json_match is not None:
+        try:
+            parsed = json.loads(json_match.group())
+            entries = parsed.get("token_quality", [])
+            if isinstance(entries, list):
+                for entry in entries:
+                    if isinstance(entry, dict):
+                        _apply_entry(entry)
+                return q_list, reason_list
+        except json.JSONDecodeError:
+            pass  # fall through to per-entry regex
+
+    # Fallback: per-entry regex (tolerates truncated JSON).  Match each
+    # `{"token": "...", "q": <num>, "reason": "..."}` block independently.
+    entry_pattern = re.compile(
+        r'\{\s*"token"\s*:\s*"([^"]+)"\s*,\s*"q"\s*:\s*([0-9.eE+\-]+)\s*,'
+        r'\s*"reason"\s*:\s*"([^"]*)"\s*\}',
+        re.DOTALL,
+    )
+    for m in entry_pattern.finditer(raw_text):
+        _apply_entry({"token": m.group(1), "q": m.group(2), "reason": m.group(3)})
     return q_list, reason_list
 
 

@@ -27,6 +27,14 @@ PYTHON="/data1/mq/conda_envs/gread-core/bin/python"
 TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
 LOGFILE="/tmp/phase3_block2_yelpchi_bwgnn_${TIMESTAMP}.log"
 
+# Ensure conda env binaries (ninja, etc.) are on PATH and disable
+# flashinfer JIT sampler (avoids ninja FileNotFoundError surfaced during
+# pilot v3 vLLM init). PYTORCH_CUDA_ALLOC_CONF reduces fragmentation on
+# 24GB cards during multi-cell parallel runs.
+export PATH="/data1/mq/conda_envs/gread-core/bin:${PATH}"
+export VLLM_USE_FLASHINFER="${VLLM_USE_FLASHINFER:-0}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
 # ---- Configuration ----
 SEEDS=(42 123 456 789 2026)
 CELLS=(E0 E1 E2 E3 E4 E4prime E5)

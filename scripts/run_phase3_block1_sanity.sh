@@ -22,6 +22,12 @@ cd "$REPO_ROOT"
 
 PYTHON="/data1/mq/conda_envs/gread-core/bin/python"
 
+# Ensure conda env binaries (ninja, etc.) are on PATH so vLLM's flashinfer
+# JIT compile can find them. Disable flashinfer sampler as belt-and-braces.
+export PATH="/data1/mq/conda_envs/gread-core/bin:${PATH}"
+export VLLM_USE_FLASHINFER="${VLLM_USE_FLASHINFER:-0}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
 echo "================================================================"
 echo "  Block 1 sanity pilot"
 echo "  Proposal: $PROPOSAL"
