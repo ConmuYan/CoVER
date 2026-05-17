@@ -1,36 +1,40 @@
-"""Phase2 unified CoVER-REL Reasoner.
+"""Phase 2 unified CoVER-REL Reasoner — Phase 3 cleanup version.
 
-Single forward path
--------------------
+Forward (rel-only, post-Commit-1 v2)::
 
-For each node ``i`` the final logit decomposes additively as::
+    z_i = b_i + Δ_rel_i
 
-    z_i = b_i + Δ_rel_i + α_i · Δ_llm_i
+The legacy additive judge path ``z_i += α_i · Δ_llm_i`` was removed in
+Commit 1 v2 (Phase 3 cleanup) after being falsified at 5 seeds
+(paired t = +0.03, p = 0.976 even with 120 → 2000 vLLM judge packets;
+see ``artifacts/tables/yelpchi_bwgnn_judge_revived_5seed.md``).
 
-where:
+Where:
 
 * ``b_i = base_logit.detach()`` is the frozen base detector logit.
 * ``h_i,r = Expert_r(E_i,r)`` is the per-relation hidden produced by an MLP
   expert from the 9-dim relation statistics ``E_i,r``.
-* ``g_i = softmax(a_i / tau_gate, dim=-1)`` is a **softmax-normalised** schema
-  gate over the ``R`` relations (so ``Σ_r g_i,r = 1``).  Unlike the legacy
-  ``EvidenceReasoner`` (anchor + per-optional-relation sigmoid gates), this
-  module shares one softmax over all relations.
+* ``g_i = softmax(a_i / tau_gate, dim=-1)`` is a softmax-normalised schema
+  gate over the ``R`` relations (so ``Σ_r g_i,r = 1``).
 * ``u_i = Σ_r g_i,r · Head_r(h_i,r)`` mixes the per-relation scalar residual
   contributions by the gate.
 * ``Δ_rel_i = delta_rel_max · tanh(u_i)`` is the bounded relation residual.
-* When ``use_judge`` is enabled and a judge is available for node ``i``::
 
-      z_judge_i = JudgeEncoder(J_i)
-      cond_i    = cat[z_judge_i, fused_h_i, g_i]
-      α_i       = mask_judge_i · alpha_max · sigmoid(Head_alpha(cond_i))
-      Δ_llm_i   = delta_llm_max · tanh(Head_llm(cond_i))
+Backward compatibility
+----------------------
 
-  ``mask_judge_i`` is 1 only when the judge packet was accepted; otherwise
-  ``α_i`` is forcibly zero so the LLM path contributes nothing.
+The ``__init__`` and ``forward`` signatures keep the old judge-related
+keyword arguments (``use_judge``, ``judge_feature_dim``, ``alpha_max``,
+``delta_llm_max``, ``judge_features``, ``judge_mask``, ...) so that
+imports and rel-only Phase 2 configs continue to work without source
+changes.  When any of these is set to a non-default (judge-on) value,
+``__init__`` / ``forward`` raises ``NotImplementedError`` with a pointer
+to ``PHASE2_DEPRECATION_PLAN_CORRECTION.md``.  This is intentional
+"broken-but-explicit" behaviour for the legacy judge code paths.
 
-The module is intentionally additive and side-effect free relative to
-``models/reasoner.py``; both can coexist without import-time clashes.
+The output dict still contains ``alpha_llm``, ``delta_llm``, and
+``judge_used_mask`` as zero / False tensors so downstream diagnostics
+code does not break with ``KeyError``.
 """
 
 from __future__ import annotations
@@ -39,6 +43,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+
+
+_DEPRECATION_MSG = (
+    "Judge fusion path removed in Commit 1 v2 (Phase 3 cleanup). "
+    "Per RESEARCH_BRIEF.md §3.1 the α·Δ_llm additive residual was 5-seed "
+    "falsified (paired t = +0.03, p = 0.976). LEQA replacement coming in "
+    "Commit 2. See PHASE2_DEPRECATION_PLAN_CORRECTION.md."
+)
 
 
 def _make_relation_expert(
@@ -72,7 +84,7 @@ def _make_relation_head(hidden_dim: int) -> nn.Linear:
     """Per-relation scalar residual head.
 
     Zero-initialised so ``Head_r(h) = 0`` at the start of training; this gives
-    ``Δ_rel ≈ 0`` initially and lets the BWGNN base logit speak for itself.
+    ``Δ_rel ≈ 0`` initially and lets the frozen base logit speak for itself.
     """
     head = nn.Linear(hidden_dim, 1)
     nn.init.zeros_(head.weight)
@@ -80,36 +92,8 @@ def _make_relation_head(hidden_dim: int) -> nn.Linear:
     return head
 
 
-def _make_alpha_head(in_dim: int, hidden_dim: int, alpha_bias_init: float) -> nn.Sequential:
-    """Judge gate head.  Last-layer bias init -3.0 ⇒ sigmoid(-3) ≈ 0.0474."""
-    head = nn.Sequential(
-        nn.Linear(in_dim, hidden_dim),
-        nn.ReLU(),
-        nn.Linear(hidden_dim, 1),
-    )
-    final = head[-1]
-    if isinstance(final, nn.Linear):
-        nn.init.zeros_(final.weight)
-        nn.init.constant_(final.bias, float(alpha_bias_init))
-    return head
-
-
-def _make_llm_head(in_dim: int, hidden_dim: int) -> nn.Sequential:
-    """Judge residual head.  Zero-initialised so ``Δ_llm ≈ 0`` at start."""
-    head = nn.Sequential(
-        nn.Linear(in_dim, hidden_dim),
-        nn.ReLU(),
-        nn.Linear(hidden_dim, 1),
-    )
-    final = head[-1]
-    if isinstance(final, nn.Linear):
-        nn.init.zeros_(final.weight)
-        nn.init.zeros_(final.bias)
-    return head
-
-
 class CoVERRelReasoner(nn.Module):
-    """Phase2 unified reasoner with softmax relation gate and optional LLM judge.
+    """Phase 2 unified reasoner with softmax relation gate.
 
     Args:
         base_z_dim: Dimension of base detector embeddings ``base_z`` passed at forward.
@@ -118,8 +102,7 @@ class CoVERRelReasoner(nn.Module):
             chunks of size ``rel_stat_dim``.
         anchor_relation: Primary anchor relation (must be present in
             ``relation_names``).  Diagnostic only — the softmax gate is
-            symmetric across all relations.  Downstream code may use this
-            to pick a "default" relation for logs.
+            symmetric across all relations.
         rel_stat_dim: Per-relation statistic dim (default 9 to match
             ``RELATION_STAT_NAMES``).
         rel_hidden_dim: Per-relation expert output dim.
@@ -127,17 +110,13 @@ class CoVERRelReasoner(nn.Module):
         rel_dropout: Dropout applied after the expert ``LayerNorm``.
         tau_gate: Softmax temperature for the schema gate.
         delta_rel_max: Tanh saturation bound for the relation residual.
-        use_judge: If False, the judge encoder/heads are not constructed and
-            ``α``/``Δ_llm`` are returned as zero tensors at forward.
-        judge_feature_dim: Required when ``use_judge=True``; matches the
-            second dim of the judge feature tensor.
-        judge_hidden_dim: Hidden dim of the judge encoder and the
-            ``α``/``Δ_llm`` head bottleneck.
-        judge_dropout: Dropout applied after the judge encoder ``LayerNorm``.
-        delta_llm_max: Tanh saturation bound for the LLM residual.
-        alpha_max: Upper bound for the judge gate (after sigmoid).
-        alpha_bias_init: Last-layer bias for the alpha head.  ``-3.0`` ⇒
-            ``sigmoid(-3) ≈ 0.0474`` so the LLM path starts ~off.
+
+        use_judge, judge_feature_dim, judge_hidden_dim, judge_dropout,
+        delta_llm_max, alpha_max, alpha_bias_init: **Deprecated noop kwargs.**
+            Kept for backward compatibility with rel-only configs that
+            still pass them with default (off) values.  Any judge-on
+            configuration raises ``NotImplementedError`` per
+            ``PHASE2_DEPRECATION_PLAN_CORRECTION.md``.
     """
 
     def __init__(
@@ -151,15 +130,21 @@ class CoVERRelReasoner(nn.Module):
         rel_dropout: float = 0.30,
         tau_gate: float = 0.7,
         delta_rel_max: float = 2.0,
+        # ----- Deprecated noop kwargs (Commit 1 v2) -----
         use_judge: bool = False,
         judge_feature_dim: int = 0,
         judge_hidden_dim: int = 32,
         judge_dropout: float = 0.30,
         delta_llm_max: float = 0.75,
-        alpha_max: float = 0.10,
+        alpha_max: float = 0.0,
         alpha_bias_init: float = -3.0,
     ):
         super().__init__()
+
+        # ----- Reject any judge-on configuration -----
+        if bool(use_judge) or float(alpha_max) > 0.0 or int(judge_feature_dim) > 0:
+            raise NotImplementedError(_DEPRECATION_MSG)
+
         if not relation_names:
             raise ValueError("relation_names must be non-empty")
         rel_names = [str(name).upper() for name in relation_names]
@@ -181,13 +166,18 @@ class CoVERRelReasoner(nn.Module):
         self.rel_dropout = float(rel_dropout)
         self.tau_gate = max(float(tau_gate), 1e-6)
         self.delta_rel_max = float(delta_rel_max)
-        self.use_judge = bool(use_judge)
-        self.judge_feature_dim = int(judge_feature_dim)
+
+        # ----- Backward-compat attributes (always read as judge-off) -----
+        self.use_judge = False
+        self.judge_feature_dim = 0
         self.judge_hidden_dim = int(judge_hidden_dim)
         self.judge_dropout = float(judge_dropout)
         self.delta_llm_max = float(delta_llm_max)
-        self.alpha_max = float(alpha_max)
+        self.alpha_max = 0.0
         self.alpha_bias_init = float(alpha_bias_init)
+        self.judge_encoder = None
+        self.head_alpha = None
+        self.head_llm = None
 
         # ----- Per-relation experts and scalar residual heads -----
         self.relation_experts = nn.ModuleDict({
@@ -207,37 +197,8 @@ class CoVERRelReasoner(nn.Module):
         # ----- Softmax gate over R relations -----
         gate_in_dim = self.base_z_dim + self.num_relations * self.rel_hidden_dim
         self.gate_logit_head = nn.Linear(gate_in_dim, self.num_relations)
-        # Zero init ⇒ initial logits = 0 ⇒ uniform 1/R gate, lets training
-        # discover dominance from data instead of a baked-in prior.
         nn.init.zeros_(self.gate_logit_head.weight)
         nn.init.zeros_(self.gate_logit_head.bias)
-
-        # ----- Optional judge path -----
-        if self.use_judge:
-            if self.judge_feature_dim <= 0:
-                raise ValueError(
-                    "judge_feature_dim must be > 0 when use_judge=True"
-                )
-            judge_layers: list[nn.Module] = [
-                nn.Linear(self.judge_feature_dim, self.judge_hidden_dim),
-                nn.ReLU(),
-                nn.LayerNorm(self.judge_hidden_dim),
-            ]
-            if self.judge_dropout > 0:
-                judge_layers.append(nn.Dropout(self.judge_dropout))
-            self.judge_encoder = nn.Sequential(*judge_layers)
-
-            cond_dim = (
-                self.judge_hidden_dim + self.rel_hidden_dim + self.num_relations
-            )
-            self.head_alpha = _make_alpha_head(
-                cond_dim, self.judge_hidden_dim, self.alpha_bias_init
-            )
-            self.head_llm = _make_llm_head(cond_dim, self.judge_hidden_dim)
-        else:
-            self.judge_encoder = None
-            self.head_alpha = None
-            self.head_llm = None
 
     # ------------------------------------------------------------------ forward
     def forward(
@@ -248,33 +209,33 @@ class CoVERRelReasoner(nn.Module):
         judge_features: Tensor | None = None,
         judge_mask: Tensor | None = None,
     ) -> dict[str, Tensor]:
-        """Run the unified forward pass.
+        """Run the rel-only forward pass.
 
         Args:
             base_z: Base detector embeddings ``(N, base_z_dim)``.  Detached
                 internally so no gradient flows back to the base detector.
-            base_logit: Base detector logits ``(N,)`` or ``(N, 1)``.  Detached
-                internally.
+            base_logit: Base detector logits ``(N,)`` or ``(N, 1)``.  Detached.
             relation_features: Concatenated per-relation 9-dim stats arranged
                 in ``relation_names`` order, shape ``(N, R * rel_stat_dim)``.
-            judge_features: Encoded judge features ``(N, judge_feature_dim)``
-                or ``None`` when ``use_judge=False``.
-            judge_mask: Boolean acceptance mask ``(N,)`` or ``None``.  When a
-                node's mask is False, the alpha gate is forced to zero.
+            judge_features, judge_mask: **Deprecated.**  Must be ``None``.
+                Passing non-None raises ``NotImplementedError``.
 
         Returns:
-            A dict with at least::
+            A dict with::
 
-                final_logit       (N,)
-                rel_only_logit    (N,)            # b + Δ_rel
+                final_logit       (N,)            # = b + Δ_rel
+                rel_only_logit    (N,)            # = b + Δ_rel
                 relation_gate     (N, R)          # softmax-normalised
                 delta_rel         (N,)
-                delta_llm         (N,)            # zeros when use_judge=False
-                alpha_llm         (N,)            # zeros for rejected/missing judge
-                judge_used_mask   (N,) bool       # always False when use_judge=False
+                delta_llm         (N,)            # always zeros (backward-compat)
+                alpha_llm         (N,)            # always zeros (backward-compat)
+                judge_used_mask   (N,) bool       # always False (backward-compat)
                 fused_rel_h       (N, rel_hidden_dim)
-                relation_strength (N, R)          # ||Head_r(h_i,r)||₂ (post-Head)
+                relation_strength (N, R)          # |Head_r(h_i,r)| post-Head
         """
+        if judge_features is not None or judge_mask is not None:
+            raise NotImplementedError(_DEPRECATION_MSG)
+
         if base_z.dim() != 2:
             raise ValueError(
                 f"base_z must be 2D (N, base_z_dim); got {tuple(base_z.shape)}"
@@ -309,77 +270,39 @@ class CoVERRelReasoner(nn.Module):
             head_out_per_rel.append(self.relation_heads[name](h).view(-1))  # (N,)
 
         # ----- Schema gate g_i = softmax(a_i / tau_gate) -----
-        all_h = torch.cat(h_per_rel, dim=-1)                   # (N, R * rel_hidden_dim)
-        gate_input = torch.cat([z_detached, all_h], dim=-1)    # (N, base_z_dim + R*rel_hidden_dim)
-        gate_logits = self.gate_logit_head(gate_input)         # (N, R)
-        relation_gate = F.softmax(gate_logits / self.tau_gate, dim=-1)  # (N, R)
+        all_h = torch.cat(h_per_rel, dim=-1)
+        gate_input = torch.cat([z_detached, all_h], dim=-1)
+        gate_logits = self.gate_logit_head(gate_input)
+        relation_gate = F.softmax(gate_logits / self.tau_gate, dim=-1)
 
         # ----- Relation residual u_i = Σ_r g_i,r * Head_r(h_i,r) -----
-        head_stack = torch.stack(head_out_per_rel, dim=1)      # (N, R)
-        u_i = (relation_gate * head_stack).sum(dim=-1)         # (N,)
-        delta_rel = self.delta_rel_max * torch.tanh(u_i)       # (N,)
+        head_stack = torch.stack(head_out_per_rel, dim=1)
+        u_i = (relation_gate * head_stack).sum(dim=-1)
+        delta_rel = self.delta_rel_max * torch.tanh(u_i)
 
-        # Gate-weighted fused expert hidden — used to condition α / Δ_llm.
-        h_stack = torch.stack(h_per_rel, dim=1)                # (N, R, rel_hidden_dim)
-        fused_rel_h = (relation_gate.unsqueeze(-1) * h_stack).sum(dim=1)  # (N, rel_hidden_dim)
+        # Gate-weighted fused expert hidden — used to condition downstream code
+        # that previously consumed it (LEQA in Commit 2 will reuse this).
+        h_stack = torch.stack(h_per_rel, dim=1)
+        fused_rel_h = (relation_gate.unsqueeze(-1) * h_stack).sum(dim=1)
 
-        # Dominance signal for L_sparse.  Head_r outputs a scalar so the L2 norm
-        # collapses to the absolute value; this still measures the magnitude of
-        # the per-relation contribution to u_i (before gate weighting).
-        relation_strength = head_stack.abs()                   # (N, R)
+        # Dominance signal for L_sparse.
+        relation_strength = head_stack.abs()
 
-        rel_only_logit = b_i + delta_rel                       # (N,)
+        rel_only_logit = b_i + delta_rel
+        final_logit = rel_only_logit
 
-        # ----- Optional judge path -----
-        alpha_llm = torch.zeros(n, device=device, dtype=dtype)
-        delta_llm = torch.zeros(n, device=device, dtype=dtype)
-        judge_used_mask = torch.zeros(n, device=device, dtype=torch.bool)
-
-        if self.use_judge:
-            if judge_features is None:
-                judge_features = torch.zeros(
-                    n, self.judge_feature_dim, device=device, dtype=dtype
-                )
-            if judge_features.shape[1] != self.judge_feature_dim:
-                raise ValueError(
-                    f"judge_features dim mismatch: "
-                    f"{judge_features.shape[1]} != judge_feature_dim={self.judge_feature_dim}"
-                )
-            j_feats = judge_features.to(device=device, dtype=dtype)
-
-            if judge_mask is None:
-                mask_bool = torch.zeros(n, device=device, dtype=torch.bool)
-            else:
-                mask_bool = judge_mask.to(device=device).view(-1).to(torch.bool)
-            judge_used_mask = mask_bool
-            mask_f = mask_bool.to(dtype=dtype).view(-1, 1)     # (N, 1)
-
-            z_judge = self.judge_encoder(j_feats)              # (N, judge_hidden_dim)
-            cond = torch.cat(
-                [z_judge, fused_rel_h, relation_gate], dim=-1
-            )                                                  # (N, judge_h + rel_h + R)
-
-            alpha_raw = self.head_alpha(cond)                  # (N, 1)
-            # mask_f forces α=0 for rejected/missing judge.
-            alpha_llm = (
-                self.alpha_max * torch.sigmoid(alpha_raw) * mask_f
-            ).view(-1)                                         # (N,)
-
-            delta_raw = self.head_llm(cond)                    # (N, 1)
-            delta_llm = (
-                self.delta_llm_max * torch.tanh(delta_raw)
-            ).view(-1)                                         # (N,)
-
-        final_logit = rel_only_logit + alpha_llm * delta_llm   # (N,)
+        # ----- Backward-compat zero tensors for deprecated judge outputs -----
+        zero_n = torch.zeros(n, device=device, dtype=dtype)
+        zero_n_bool = torch.zeros(n, device=device, dtype=torch.bool)
 
         return {
             "final_logit": final_logit,
             "rel_only_logit": rel_only_logit,
             "relation_gate": relation_gate,
             "delta_rel": delta_rel,
-            "delta_llm": delta_llm,
-            "alpha_llm": alpha_llm,
-            "judge_used_mask": judge_used_mask,
+            "delta_llm": zero_n,
+            "alpha_llm": zero_n,
+            "judge_used_mask": zero_n_bool,
             "fused_rel_h": fused_rel_h,
             "relation_strength": relation_strength,
         }

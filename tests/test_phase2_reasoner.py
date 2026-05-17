@@ -33,6 +33,15 @@ ALPHA_MAX = 0.10
 
 
 def _make_reasoner(use_judge: bool = False, alpha_max: float = 0.0) -> CoVERRelReasoner:
+    # Phase 3 cleanup (Commit 1 v2): judge fusion path deprecated.
+    # See PHASE2_DEPRECATION_PLAN_CORRECTION.md and RESEARCH_BRIEF.md §3.1
+    # (5-seed paired t = +0.03, p = 0.976).
+    if use_judge or alpha_max > 0.0:
+        pytest.skip(
+            "Judge fusion path deprecated in Commit 1 v2 "
+            "(see PHASE2_DEPRECATION_PLAN_CORRECTION.md); "
+            "LEQA replacement coming in Commit 2."
+        )
     return CoVERRelReasoner(
         base_z_dim=Z_DIM,
         relation_names=["RUR", "RSR", "RTR"],

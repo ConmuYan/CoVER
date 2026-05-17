@@ -24,6 +24,14 @@ from training.phase2_losses import (
 )
 
 
+# Phase 3 cleanup (Commit 1 v2): L_align (judge-tilted evidence alignment)
+# was 5-seed falsified (paired t = -0.0004, p = 0.32 n.s.) and removed.
+# See PHASE2_DEPRECATION_PLAN_CORRECTION.md and RESEARCH_BRIEF.md §3.2.
+_SKIP_L_ALIGN = pytest.mark.skip(
+    reason="L_align deprecated in Commit 1 v2; see PHASE2_DEPRECATION_PLAN_CORRECTION.md"
+)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -71,6 +79,7 @@ def _make_pos_weight():
 # ---------------------------------------------------------------------------
 
 
+@_SKIP_L_ALIGN
 def test_loss_components_finite():
     """All loss components must be finite (no NaN/Inf)."""
     out = _make_outputs(with_judge=True)
@@ -196,6 +205,7 @@ def test_l_sparse_dominance():
     )
 
 
+@_SKIP_L_ALIGN
 def test_l_align_only_accepted():
     """L_align should only consider nodes with has_target_mask=True AND train_mask."""
     out = _make_outputs(n=8, with_judge=True)
@@ -223,6 +233,7 @@ def test_l_align_only_accepted():
     )
 
 
+@_SKIP_L_ALIGN
 def test_l_align_zero_when_no_judge():
     """L_align must be 0 when judge_align is None."""
     out = _make_outputs(n=8, with_judge=False)
@@ -239,6 +250,7 @@ def test_l_align_zero_when_no_judge():
     assert stats["judge_align_count"] == 0.0
 
 
+@_SKIP_L_ALIGN
 def test_build_judge_relation_targets_strong(tmp_path):
     """Strong quality scores produce peaked target distribution with has_target=True."""
     jsonl = tmp_path / "accepted_judge.jsonl"
@@ -265,6 +277,7 @@ def test_build_judge_relation_targets_strong(tmp_path):
     assert abs(result["w_weight"][2].item() - 1.0) < 1e-5
 
 
+@_SKIP_L_ALIGN
 def test_build_judge_uncertain(tmp_path):
     """Uncertain verdict should produce has_target=False."""
     jsonl = tmp_path / "accepted_judge.jsonl"
@@ -287,6 +300,7 @@ def test_build_judge_uncertain(tmp_path):
     )
 
 
+@_SKIP_L_ALIGN
 def test_tilted_kl_correctness():
     """Manual judge-tilted KL must match L_align output."""
     gate_probs = F.softmax(torch.tensor([[2.0, 0.5, -1.0]]), dim=1)  # (1, R)
