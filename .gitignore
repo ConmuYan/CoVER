@@ -83,6 +83,7 @@ runs/
 
 # Local IDE / agents directories
 .agents/
+.aris/
 .codex/
 .claude/
 .sisyphus/

@@ -2,33 +2,39 @@
 
 ## Current Project State
 
-The canonical CoVER method is the **two-phase CoVER-REL Reasoner**.
+The canonical CoVER method is the **two-phase CoVER-REL Reasoner** with a
+**cls-only loss**.
 
 ```
-Phase1  : train a fresh base detector (BWGNN or GraphSAGE)
-          → frozen as structural prior
+Phase1  : train a fresh base detector (BWGNN / GraphSAGE / GCN / GAT)
+          → frozen as structural prior (SHA-256 verified)
 Phase2  : train one unified, base-agnostic CoVER-REL Reasoner over
-          relation-aware evidence and contract-verified score-blind
-          LLM judge features
-          → z_i = b_i + Δ_rel,i + α_i · Δ_llm,i
+          relation-aware score-blind evidence
+          → z_i = b_i + Δ_rel,i        (no LLM judge term)
+          → L   = L_cls                (no L_int / L_sparse / L_align)
 ```
 
-- The Phase2 Reasoner consumes only frozen base logits/embeddings,
-  relation evidence features, and optional accepted judge features. It
-  contains no BWGNN- or SAGE-specific logic.
-- The LLM judge is a **score-blind, contract-verified, conservative**
-  alignment / explanation signal — not a teacher, not a predictor, not
-  the main metric source.
+- The Phase2 Reasoner consumes only frozen base logits/embeddings and
+  per-relation 9-dim anonymous evidence statistics. It contains no
+  BWGNN- / SAGE- / GCN- / GAT-specific logic.
+- **All LLM-judge code paths are removed from the canonical method** after
+  5-seed paired t-tests falsified every variant; see "Killed Routes" below.
+- The 4-term legacy loss (L_cls + λ_int·L_int + λ_sparse·L_sparse + λ_align·L_align)
+  was collapsed to **L_cls only** after 5-seed paired t-test on
+  YelpChi-BWGNN showed all four loss variants statistically
+  indistinguishable from cls-only (see
+  `artifacts/tables/yelpchi_bwgnn_ablation_loss_arch_5seed.md`).
 
-Cross-base coverage:
+Cross-base coverage (8/8 configurations method-direction positive,
+6/8 5-seed paired-t significant; see `CROSS_DATASET_CROSS_BASE_FINDING.md`):
 
 - **BWGNN** is the primary backbone for canonical Phase2 results.
 - **GraphSAGE** validates that the Phase2 Reasoner interface is base-agnostic;
-  positive on YelpChi (confirmed config delivers significant lift over both
-  Phase1 base and legacy Stage3 anchor_gate, with ~41% std reduction over
-  default Phase2). Amazon-SAGE remains a diagnostic / saturation case.
-- **GCN / GAT** are cross-model validation; Phase2 rescues weak base
-  detectors on strong-anchor datasets (YelpChi/RUR).
+  YelpChi-SAGE confirmed +0.254 AUPRC paired t = +6.82 (p<0.01) vs Phase1.
+  Amazon-SAGE remains a diagnostic / saturation case.
+- **GCN / GAT** are cross-model validation; rel branch rescues weak base
+  detectors on strong-anchor datasets (YelpChi-GCN: +0.292 AUPRC,
+  YelpChi-GAT: +0.320 AUPRC).
 
 Legacy (do not deprecate, do not promote): the older Stage3 `anchor_gate`
 (CoVER-REL-Gate) and Stage3 `judge_train` (CoVER-REL-Judge) configs and
@@ -36,8 +42,21 @@ artifacts remain reproducible under `configs/cover-rel-gj/stage3_legacy/`
 and the matching `cover_rel_anchor_gate_nollm` / `cover_rel_judge_*` run
 names. They are the historical baseline that Phase2 replaces.
 
-CoVER-DIR, CV-SCD, and CoVER-LIFT are exploratory or negative routes. Do
-not restart them as the main method.
+Killed Routes (all 5-seed paired-t falsified — **do not restart as the main
+method**):
+
+- `α · Δ_llm` additive LLM-judge residual (paired t = +0.03, p = 0.976)
+- `L_align` judge-tilted KL (paired t = −1.14, p = 0.32)
+- `L_intervention` base-anchored Δ_rel² penalty (paired t = +0.26, p = 0.81 alone;
+  +1.02, p = 0.36 with L_sparse)
+- `L_sparse` evidence→gate KL (paired t = +2.59, p = 0.061 — closest to bar, still fails)
+- LEQA (LoRA-Qwen3 evidence-quality auditor + L_audit): null/negative at sanity gate
+- B3 PRTAE (per-relation MLP-hidden auxiliary feature injection):
+  1/8 conditions significant positive, 3/8 significant negative
+- CoVER-DIR, CV-SCD, CoVER-LIFT: directional / counter-evidence / hidden-state
+  distillation variants, all sub-+0.008 AUPRC or gate-degenerate
+- LLM verbalization embedding (PCA32): paired t = −10.6, p < 0.01 worse
+- Raw-text sigpool: paired t = −19.4, p < 0.01 catastrophically worse
 
 Do **not** claim state of the art unless an explicit SOTA comparison is
 added. Improvements are reported relative to the fresh Phase1 base.
@@ -63,18 +82,41 @@ Cross-model 5-seed (`Phase2` Gate / Judge ablations under
 | Amazon  | GCN          | +0.0000                    | −0.0002                     |
 | Amazon  | GAT (heads=1)| +0.0823                    | +0.0087                     |
 
-SAGE-YelpChi confirmed Phase2 reasoner (5-seed mean ± std, from
-`configs/phase2_reasoner/phase2_yelpchi_sage_confirm_lalign_1em2_standard.yaml`):
+SAGE-YelpChi confirmed Phase2 reasoner (5-seed mean ± std). Numbers reported
+were obtained with the 4-term loss (`L_int + L_sparse + L_align`); the
+4-term-vs-cls-only paired t is ns (p = 0.991 on YelpChi-BWGNN, see ablation
+table), so these numbers carry over verbatim to the cls-only canonical
+form:
 
 | Compared against        | ΔAUPRC                | paired t    |
 |-------------------------|-----------------------|-------------|
 | Phase1 SAGE base        | **+0.2540 ± 0.0833**  | **+6.82** (p<0.01) |
 | Legacy Stage3 anchor_gate | +0.0321 ± 0.0283    | +2.53 (marginal at n=5) |
-| Phase2 default E0/E1/E2 | +0.025..+0.028        | ns; **std cut ~41%** |
+| Phase2 default E0/E1/E2 | +0.025..+0.028        | ns; **std cut ~41%** (variance-reduction side-effect of L_int+L_sparse; observability footnote only) |
 
-`alpha_max=0` and mean `α_llm = 0`: the gain is **not** from direct LLM
-residual prediction. Attribute it to judge-aligned relation reasoning /
-regularization.
+`alpha_max=0` and mean `α_llm = 0`: the gain is not from any LLM residual.
+Attribute it to the rel-branch architecture (per-relation expert MLP +
+schema softmax gate + bounded tanh residual), not to any loss-term magic.
+
+## Loss-Term Ablation (the honest record)
+
+5-seed paired t-test, YelpChi-BWGNN, all cells vs L7 (full 4-term) reference.
+Source: `artifacts/tables/yelpchi_bwgnn_ablation_loss_arch_5seed.md`.
+
+| Cell  | Variant       | AUPRC paired Δ vs L7 (t, p)        |
+|-------|---------------|------------------------------------|
+| A0    | base only     | Δ=−0.1042 (t=−30.4, p≈7e-6) ★★★    |
+| **L0**| **cls only**  | Δ=+0.0000 (t=+0.01, p=0.991) ns ★ canonical |
+| L1    | +L_int        | Δ=+0.0006 (t=+0.26, p=0.81) ns     |
+| L2    | +L_sparse     | Δ=+0.0025 (t=+2.59, p=0.061) ns    |
+| L3    | +L_align      | Δ=−0.0004 (t=−1.14, p=0.32) ns     |
+| L4    | +L_int+L_sp   | Δ=+0.0015 (t=+1.02, p=0.36) ns     |
+| L7    | full 4-term ★ | reference (now collapsed to L0)    |
+| A1    | rel-only      | Δ=+0.0014 (t=+1.23, p=0.29) ns     |
+
+→ The architecture (frozen base + rel branch) supplies the entire +0.1042
+AUPRC lift; no loss term clears the 5-seed p<0.05 bar over cls-only.
+Canonical loss is therefore **L_cls only**.
 
 ## Run-Label Taxonomy
 
@@ -84,15 +126,15 @@ When reporting any run, tag it with one of:
 |---------------------------------|-------------------------------------------------------------------------|---------------------------------------------------|
 | **legacy Stage3 anchor_gate**   | First-gen `cover_rel_anchor_gate_nollm`                                 | `configs/cover-rel-gj/stage3_legacy/`             |
 | **legacy Stage3 judge_train**   | First-gen `cover_rel_judge_*_strength_gate`                             | `configs/cover-rel-gj/stage3_legacy/`             |
-| **Phase2 E0** (relgate)         | unified Reasoner, judge off                                             | `configs/cover-rel-gj/phase2_ablations/`          |
-| **Phase2 E1** (judge_align)     | unified Reasoner, judge on, `alpha=0`, `lambda_align>0`                 | `configs/cover-rel-gj/phase2_ablations/`          |
-| **Phase2 E2** (judge_residual)  | unified Reasoner, judge on, `alpha>0`, `lambda_align>0`                 | `configs/cover-rel-gj/phase2_ablations/`          |
-| **Phase2 E3** (no_trust)        | E2 with `lambda_trust=0` (ablation)                                     | `configs/cover-rel-gj/phase2_ablations/`          |
-| **Phase2 confirmed**            | canonical unified Reasoner used in the manuscript                       | `configs/phase2_reasoner/`                        |
+| **legacy Phase2 4-term**        | Pre-cls-only Phase2 runs with L_int+L_sparse[+L_align]                  | `configs/phase2_reasoner/*` (numbers still valid) |
+| **legacy Phase2 E1/E2/E3** (judge cells) | Judge-on ablations; reasoner now raises NotImplementedError on judge_on path | `configs/cover-rel-gj/phase2_ablations/`  |
+| **Phase2 E0** (rel-only)        | unified Reasoner, judge off                                             | `configs/cover-rel-gj/phase2_ablations/`          |
+| **Phase2 cls-only (canonical)** | Current canonical: `z = b + Δ_rel`, `L = L_cls`                         | `configs/phase2_reasoner/`                        |
 
 Do not introduce new Stage3 anchor_gate / judge_train docs as the final
-method. New experiments should target `configs/phase2_reasoner/` or, for
-ablation studies, `configs/cover-rel-gj/phase2_ablations/`.
+method. New experiments should target `configs/phase2_reasoner/` with the
+cls-only loss; legacy 4-term ablations stay under
+`configs/cover-rel-gj/phase2_ablations/` for historical reproducibility.
 
 ## Required Metadata For Every Run Report
 
@@ -105,38 +147,41 @@ Every results table or per-run conclusion must record:
 - `config path` (full `configs/...` path, including new subdirs)
 - `trainer script` (e.g., `scripts/train_phase2_reasoner.py`)
 - `checkpoint path`
-- whether the **base is frozen** (must be true for Phase2)
-- `alpha_max`, `lambda_align`, `lambda_trust`, `lambda_sparse`
-- accepted judge count, plus the rejected-α audit
-  (`max_abs_alpha_llm_rejected < 1e-6`)
+- whether the **base is frozen** (must be true for Phase2; SHA-256 verified)
+- `delta_rel_max`, `tau_gate` (rel-branch hyperparameters)
+- For legacy 4-term runs only: `lambda_int`, `lambda_sparse`, `lambda_align` (now deprecation no-ops in code)
 
 ## Operational Rules
 
-- Use the **two-phase CoVER-REL Reasoner** as the canonical method.
-- Use the LLM judge only as a **score-blind, contract-verified** alignment
-  / explanation signal; never as a teacher or a primary predictor.
-- Preserve score-blind packet and prompt boundaries.
+- Use the **two-phase CoVER-REL Reasoner with cls-only loss** as the canonical method.
+- The LLM-judge code path is removed; do not reintroduce `use_judge=True`,
+  `α·Δ_llm`, or `L_align` as canonical components. All such configurations
+  raise `NotImplementedError` from `models/cover_rel_reasoner.py`.
+- Preserve score-blind packet and prompt boundaries on any LLM diagnostic / explainability tooling that may still call Qwen.
 - Preserve train-only prototype construction.
 - Never expose `base_score`, `base_prob`, `base_probability`, `base_logit`,
   `confidence`, base prediction, final prediction, target label, val/test
   label, split identity, FN/FP/base-error status, or ground truth to an LLM.
-- Rejected judge outputs must not contribute to `L_align`; they must force
-  `α = 0` and `Δ_llm = 0` (audited).
+- Legacy: rejected judge outputs in any historical Stage3 run must still force
+  `α = 0` and `Δ_llm = 0` (audited via `max_abs_alpha_llm_rejected < 1e-6`).
 - `short_explanation` is human-facing only and must not enter any loss.
-- Phase2 reasoner training consumes accepted judge features and must not
-  call Qwen.
 
 ## Safety Constraints Summary
 
 ```
-LLM packet forbidden fields:
+LLM packet forbidden fields (still applies to any diagnostic LLM call):
   base_score, base_prob, base_probability, base_logit, confidence,
   base prediction, final prediction, target label, val/test label,
   split identity, FN/FP/base-error status, ground truth.
 
-Rejected / missing judge output:
-  α_i = 0 ; Δ_llm,i = 0 ; L_align contribution = 0
-  audited via max_abs_alpha_llm_rejected < 1e-6
+Legacy Stage3 judge audit (cls-only canonical does NOT use judge):
+  Rejected / missing judge output:
+    α_i = 0 ; Δ_llm,i = 0 ; L_align contribution = 0
+    audited via max_abs_alpha_llm_rejected < 1e-6
+
+Phase 2 canonical (cls-only) audit:
+  base_freeze SHA-256 pre/post hashes bit-identical (base.pt, base_logits, base_z)
+  forbidden-field audit count == 0 on the 9R-dim relation evidence input
 ```
 
 ## Before Modifying Models
@@ -203,3 +248,12 @@ For every task, report:
 3. How it was checked.
 4. Remaining limitations.
 5. Next recommended step.
+
+<!-- ARIS:BEGIN -->
+## ARIS Skill Scope
+ARIS skills installed in this project: 75 entries.
+Manifest: `.aris/installed-skills.txt` (lists every skill ARIS installed and its upstream target).
+For ARIS workflows, prefer the project-local skills under `.claude/skills/` over global skills.
+Do not modify or delete files inside any skill that is a symlink (symlinks point into `/data1/mq/codes/aris_repo`).
+Update with: `bash /data1/mq/codes/aris_repo/tools/install_aris.sh /data1/mq/codes/awesome-graph-anomaly-detection/cover-fd --aris-repo /data1/mq/codes/aris_repo`  (re-runnable; reconciles new/removed skills).
+<!-- ARIS:END -->

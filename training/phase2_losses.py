@@ -1,42 +1,49 @@
-"""Phase 2 3-term loss for CoVER-REL — Phase 3 cleanup version.
+"""Phase 2 cls-only loss for CoVER-REL — post 5-seed honest cleanup.
 
 Total loss::
 
-    L = L_cls + λ_int · L_intervention + λ_sparse · L_sparse
+    L = L_cls
 
-The fourth term ``λ_align · L_align`` (judge-tilted evidence alignment)
-was removed in Commit 1 v2 (Phase 3 cleanup) after 5-seed paired t-test
-showed Δ = -0.0004, p = 0.32 (n.s.) on YelpChi-BWGNN.  See
-``PHASE2_DEPRECATION_PLAN_CORRECTION.md`` for the rationale.
+The 4-term legacy form ``L = L_cls + λ_int·L_int + λ_sparse·L_sparse + λ_align·L_align``
+was empirically dismantled in three steps (all 5-seed paired t-tests on
+YelpChi-BWGNN, see ``artifacts/tables/yelpchi_bwgnn_ablation_loss_arch_5seed.md``):
 
-Term details
-------------
+* ``L_align`` (judge-tilted KL): Δ = −0.0004, p = 0.32  → removed Commit 1 v2.
+* ``L_intervention`` (base-anchored Δ_rel² penalty): Δ = +0.0006, p = 0.81
+  (single addition to cls), Δ = +0.0015, p = 0.36 (with L_sparse) → removed here.
+* ``L_sparse`` (KL(π_evidence ‖ g)): Δ = +0.0025, p = 0.0609 (closest to bar
+  but still ns) → removed here.
 
-L_cls
-    Standard pos-weighted BCE on ``final_logit[train]`` against the labels.
+The architecture (frozen base + per-relation expert MLP + schema softmax gate
++ bounded tanh residual) explains the full +0.1042 AUPRC lift from base to
+canonical (A0 → L0, t = +30.4, p ≈ 7e-6); the four loss terms collectively add
+nothing the cls-only baseline didn't already get.
 
-L_intervention  (base-anchored correction penalty)
-    ``mean_train((z - b)²)`` = ``mean_train((Δ_rel + α · Δ_llm)²)``.
-    With the judge path removed, ``α = Δ_llm ≡ 0`` so this collapses to
-    ``mean_train(Δ_rel²)``.
+Observability note
+------------------
 
-    The deprecated ``lambda_trust`` name is accepted as an alias for one
-    release.  ``eta_llm`` is kept as a no-op kwarg for backward compatibility.
-
-L_sparse  (evidence-to-gate consistency)
-    KL(π_evidence || g) where π_evidence is a fixed, non-trainable
-    relation-evidence distribution built from the relation feature packet.
+The companion documentation table for SAGE-YelpChi shows the discarded
+``L_int + L_sparse`` config produced a ~41% std reduction (0.089 → 0.052).
+That is **not** captured in this loss — it was a stability side-effect of the
+4-term regularization on a high-variance base. Future runs that need that
+stability should be reported as a "variance-reduction regularizer" ablation,
+not folded back into the canonical loss.
 
 Backward compatibility
 ----------------------
 
-* ``compute_phase2_loss`` keeps ``judge_align``, ``lambda_align``, and
-  ``eta_llm`` kwargs so legacy callers can import / construct loss
-  configs.  Passing a non-None ``judge_align`` or ``lambda_align > 0``
-  raises ``NotImplementedError``.
+* ``compute_phase2_loss`` keeps ``judge_align``, ``lambda_int``, ``lambda_trust``,
+  ``lambda_sparse``, ``lambda_align``, ``eta_llm`` kwargs so legacy configs and
+  the trainer in ``scripts/train_phase2_reasoner.py`` can call without source
+  edits.  Non-default values trigger a one-shot ``DeprecationWarning`` and
+  are then ignored.
 * ``build_judge_relation_targets`` is preserved as a stub that raises
-  ``NotImplementedError`` so legacy ``from training.phase2_losses import
-  build_judge_relation_targets`` continues to import without error.
+  ``NotImplementedError`` so legacy imports continue to load.
+* The returned ``stats`` dict preserves all observability fields
+  (``l_cls``, ``l_intervention``, ``l_sparse``, ``l_trust``,
+  ``mean_abs_delta_rel``, ``mean_gate_entropy``, ``mean_dominance_rho``, …)
+  so downstream diagnostics, plots, and CSV aggregators do not break.
+  Removed-term values are reported as ``0.0`` rather than raising KeyError.
 """
 
 from __future__ import annotations
@@ -52,24 +59,21 @@ from torch import Tensor
 _DEPRECATION_MSG_ALIGN = (
     "L_align (judge-tilted evidence alignment) removed in Commit 1 v2 "
     "(Phase 3 cleanup). Per RESEARCH_BRIEF.md §3.2 it was 5-seed "
-    "falsified (paired t = -0.0004, p = 0.32 n.s.). LEQA replacement "
-    "coming in Commit 2. See PHASE2_DEPRECATION_PLAN_CORRECTION.md."
+    "falsified (paired t = -0.0004, p = 0.32 n.s.)."
 )
 
 
 def build_judge_relation_targets(*args, **kwargs):
-    """Deprecated stub.
+    """Deprecated stub kept for legacy imports.
 
-    The full implementation was removed in Commit 1 v2 because the
-    associated ``L_align`` loss was 5-seed falsified.  The stub keeps
-    legacy imports unbroken while making any actual call explicitly
-    fail.
+    The full implementation was removed when its associated ``L_align`` loss
+    was 5-seed falsified.  Calling this raises ``NotImplementedError``.
     """
     raise NotImplementedError(_DEPRECATION_MSG_ALIGN)
 
 
 def _zero_like(reference: Tensor) -> Tensor:
-    """Return a differentiable zero scalar that shares ``reference``'s device/graph."""
+    """Return a differentiable zero scalar sharing ``reference``'s device/graph."""
     return reference.sum() * 0.0
 
 
@@ -80,13 +84,13 @@ def build_relation_evidence_distribution(
     tau: float = 1.5,
     eps: float = 1e-8,
 ) -> Tensor:
-    """Build fixed relation-evidence distribution from relation statistics.
+    """Build a fixed relation-evidence distribution from relation statistics.
 
-    Score-blind and non-trainable.  Uses anonymous relation statistics
-    rather than ``Head_r`` outputs to avoid self-reinforcing gate collapse.
-    Strength blends degree evidence, feature deviation, neighbor
-    inconsistency, anomalous z-score fraction, and prototype-margin
-    magnitude.
+    Score-blind and non-trainable.  Originally used as the target for the
+    L_sparse KL penalty before that loss term was 5-seed-falsified (p≈0.06).
+    Preserved here for diagnostic / explainability use by the trainer
+    (e.g., evidence-gate KL agreement is still logged as an observability
+    metric even though no gradient flows through it).
     """
     if relation_features.ndim != 2:
         raise ValueError(f"relation_features must be rank-2, got {tuple(relation_features.shape)}")
@@ -105,10 +109,7 @@ def build_relation_evidence_distribution(
     if D > 2:
         degree = degree + rel[..., 1].clamp_min(0.0) + rel[..., 2].clamp_min(0.0)
     deviation = rel[..., 3].clamp_min(0.0) if D > 3 else torch.zeros_like(degree)
-    if D > 4:
-        inconsistency = (1.0 - rel[..., 4]).clamp_min(0.0)
-    else:
-        inconsistency = torch.zeros_like(degree)
+    inconsistency = (1.0 - rel[..., 4]).clamp_min(0.0) if D > 4 else torch.zeros_like(degree)
     z_fraction = rel[..., 5].clamp_min(0.0) if D > 5 else torch.zeros_like(degree)
     proto_margin = rel[..., 8].abs() if D > 8 else torch.zeros_like(degree)
 
@@ -131,61 +132,54 @@ def compute_phase2_loss(
     pos_weight: Tensor | float | None = None,
     lambda_int: float | None = None,
     lambda_trust: float | None = None,
-    lambda_sparse: float = 1e-3,
+    lambda_sparse: float = 0.0,
     lambda_align: float = 0.0,
     eta_llm: float = 2.0,
 ) -> tuple[Tensor, dict[str, float]]:
-    """Compute the Phase 2 3-term loss (post-Commit-1-v2 cleanup).
+    """Compute the Phase 2 cls-only loss.
 
     Args:
-        outputs: Output dict from ``CoVERRelReasoner.forward``.  Must contain
-            ``final_logit``, ``relation_gate``, ``delta_rel``, ``delta_llm``,
-            ``alpha_llm``, ``judge_used_mask``, ``relation_strength``.
+        outputs: Output dict from ``CoVERRelReasoner.forward``.  Reads
+            ``final_logit`` (required), and the optional observability fields
+            ``relation_gate``, ``delta_rel``, ``relation_strength`` (used only
+            for stats — no contribution to ``total``).
         y: Labels ``(N,)`` (0/1).
         train_mask: Boolean mask ``(N,)`` selecting train nodes.
         judge_align: **Deprecated.** Must be ``None``.  Passing non-None
             raises ``NotImplementedError``.
         pos_weight: Positive-class weight tensor / scalar for BCE.
-        lambda_int, lambda_sparse: Term weights.
-        lambda_trust: Deprecated alias for ``lambda_int``.  Accepted for one
-            release so legacy configs continue to run.
-        lambda_align: **Deprecated.** Must be ``0.0``.  Any value > 0
-            raises ``NotImplementedError``.
-        eta_llm: Deprecated no-op.
+        lambda_int, lambda_trust, lambda_sparse, lambda_align, eta_llm:
+            **Deprecated no-ops.**  Accepted to preserve legacy config / CLI
+            compatibility.  A non-zero / non-default value emits a one-shot
+            ``DeprecationWarning`` and is then ignored.  The 5-seed paired
+            t-test on YelpChi-BWGNN (table
+            ``artifacts/tables/yelpchi_bwgnn_ablation_loss_arch_5seed.md``)
+            found none of these terms statistically significant against cls-only.
 
     Returns:
-        ``(total_loss, stats_dict)``.
+        ``(total_loss, stats_dict)`` where ``total_loss = L_cls``.  The stats
+        dict reports observability fields (mean |Δ_rel|, gate entropy,
+        dominance ρ) plus ``l_intervention = l_sparse = l_trust = 0.0`` for
+        downstream CSV-aggregator compatibility.
     """
-    # ----- Reject deprecated judge alignment -----
     if judge_align is not None or float(lambda_align) > 0.0:
         raise NotImplementedError(_DEPRECATION_MSG_ALIGN)
 
-    if lambda_int is None:
-        if lambda_trust is not None:
-            warnings.warn(
-                "lambda_trust is deprecated for Phase 2; use lambda_int. "
-                "The alias still maps to L_intervention for this release.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            lambda_int = float(lambda_trust)
-        else:
-            lambda_int = 3e-3
+    # ---- One-shot deprecation warnings for legacy weight kwargs --------
+    _warn_if_set("lambda_int", lambda_int, default=None)
+    _warn_if_set("lambda_trust", lambda_trust, default=None)
+    _warn_if_set("lambda_sparse", lambda_sparse, default=0.0)
     if eta_llm != 2.0:
         warnings.warn(
-            "eta_llm is deprecated and ignored by L_intervention.",
+            "eta_llm is deprecated and ignored by the cls-only loss.",
             DeprecationWarning,
             stacklevel=2,
         )
 
     final_logit = outputs["final_logit"]
-    rel_gate = outputs["relation_gate"]            # (N, R)
-    delta_rel = outputs["delta_rel"]               # (N,)
-    delta_llm = outputs["delta_llm"]               # (N,)
-    alpha_llm = outputs["alpha_llm"]               # (N,)
-    judge_used = outputs["judge_used_mask"]        # (N,) bool
-    relation_strength = outputs["relation_strength"]  # (N, R)
-    relation_evidence_pi = outputs.get("relation_evidence_pi")
+    delta_rel = outputs.get("delta_rel")              # (N,) optional
+    rel_gate = outputs.get("relation_gate")           # (N, R) optional
+    relation_strength = outputs.get("relation_strength")  # (N, R) optional
 
     device = final_logit.device
     train_bool = train_mask.to(device=device).view(-1).to(torch.bool)
@@ -198,10 +192,8 @@ def compute_phase2_loss(
         pw = torch.tensor(float(pos_weight), device=device)
 
     has_train = bool(train_bool.any())
-    R = relation_strength.shape[1]
-    eps = 1e-8
 
-    # ------------------------------------------------------------------ L_cls
+    # ---- L_cls (the only loss term) -----------------------------------
     if has_train:
         l_cls = F.binary_cross_entropy_with_logits(
             final_logit[train_bool], y_f[train_bool], pos_weight=pw
@@ -209,139 +201,75 @@ def compute_phase2_loss(
     else:
         l_cls = _zero_like(final_logit)
 
-    # ---------------------------------------------------------- L_intervention
-    intervention = delta_rel + alpha_llm * delta_llm
-    if has_train:
-        interv_t = intervention[train_bool]
-        l_intervention = (interv_t * interv_t).mean()
-    else:
-        l_intervention = _zero_like(final_logit)
+    total = l_cls
 
-    # ---------------------------------------------------------------- L_sparse
-    log_g_full = torch.log(rel_gate + eps)
-    ent_full = -(rel_gate * log_g_full).sum(dim=-1)
-    log_r = math.log(max(R, 2))
-    if relation_evidence_pi is None:
-        warnings.warn(
-            "relation_evidence_pi missing; falling back to detached relation_strength softmax. "
-            "Final CoVER configs should pass fixed evidence distributions.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        pi_evidence = F.softmax(relation_strength.detach(), dim=-1)
-    else:
-        pi_evidence = relation_evidence_pi.to(device=device, dtype=final_logit.dtype).detach()
-        if pi_evidence.shape != rel_gate.shape:
-            raise ValueError(
-                f"relation_evidence_pi shape mismatch: {tuple(pi_evidence.shape)} != {tuple(rel_gate.shape)}"
-            )
-        pi_evidence = pi_evidence / pi_evidence.sum(dim=-1, keepdim=True).clamp_min(eps)
-
-    if has_train and R >= 2:
-        log_pi = torch.log(pi_evidence + eps)
-        l_sparse_per_node = (pi_evidence * (log_pi - log_g_full)).sum(dim=-1)
-        l_sparse = l_sparse_per_node[train_bool].mean()
-        ent_pi = -(pi_evidence * log_pi).sum(dim=-1)
-        rho = (1.0 - ent_pi / log_r).clamp(min=0.0, max=1.0)
-    else:
-        rho = torch.zeros_like(ent_full)
-        l_sparse = _zero_like(final_logit)
-
-    total = (
-        l_cls
-        + float(lambda_int) * l_intervention
-        + float(lambda_sparse) * l_sparse
-    )
-
-    # --------------------------------------------------------------------- stats
+    # ---- Observability stats (NOT contributing to total) --------------
     with torch.no_grad():
-        if has_train:
+        if has_train and delta_rel is not None:
             mean_abs_delta_rel = float(delta_rel[train_bool].abs().mean().item())
-            mean_alpha_llm = float(alpha_llm[train_bool].mean().item())
-            mean_intervention = float(intervention[train_bool].abs().mean().item())
-            judge_train = judge_used & train_bool
-            non_judge_train = (~judge_used) & train_bool
-            base_logit = final_logit - intervention
-            base_pred = base_logit[train_bool] >= 0
-            y_train_bool = y_f[train_bool] >= 0.5
-            base_correct_train = torch.zeros_like(train_bool)
-            base_correct_train[train_bool] = base_pred == y_train_bool
-            base_wrong_train = train_bool & (~base_correct_train)
-            mean_alpha_acc = (
-                float(alpha_llm[judge_train].mean().item())
-                if bool(judge_train.any())
-                else 0.0
-            )
-            mean_alpha_rej = (
-                float(alpha_llm[non_judge_train].mean().item())
-                if bool(non_judge_train.any())
-                else 0.0
-            )
-            mean_intervention_acc = (
-                float(intervention[judge_train].abs().mean().item())
-                if bool(judge_train.any())
-                else 0.0
-            )
-            mean_intervention_rej = (
-                float(intervention[non_judge_train].abs().mean().item())
-                if bool(non_judge_train.any())
-                else 0.0
-            )
-            mean_intervention_base_correct = (
-                float(intervention[base_correct_train].abs().mean().item())
-                if bool(base_correct_train.any())
-                else 0.0
-            )
-            mean_intervention_base_wrong = (
-                float(intervention[base_wrong_train].abs().mean().item())
-                if bool(base_wrong_train.any())
-                else 0.0
-            )
-            mean_gate_entropy = float(ent_full[train_bool].mean().item())
-            if R >= 2:
-                mean_dominance_rho = float(rho[train_bool].mean().item())
-                evidence_gate_kl = float(l_sparse_per_node[train_bool].mean().item())
-                mean_evidence_entropy = float(ent_pi[train_bool].mean().item())
-            else:
-                mean_dominance_rho = 0.0
-                evidence_gate_kl = 0.0
-                mean_evidence_entropy = 0.0
+            mean_intervention = mean_abs_delta_rel  # alias for backward CSV compat
         else:
             mean_abs_delta_rel = 0.0
-            mean_alpha_llm = 0.0
             mean_intervention = 0.0
-            mean_alpha_acc = 0.0
-            mean_alpha_rej = 0.0
-            mean_intervention_acc = 0.0
-            mean_intervention_rej = 0.0
-            mean_intervention_base_correct = 0.0
-            mean_intervention_base_wrong = 0.0
+
+        if has_train and rel_gate is not None and rel_gate.numel() > 0:
+            eps = 1e-8
+            log_g = torch.log(rel_gate + eps)
+            ent = -(rel_gate * log_g).sum(dim=-1)
+            mean_gate_entropy = float(ent[train_bool].mean().item())
+            R = rel_gate.shape[1]
+            if R >= 2:
+                rho = (1.0 - ent / math.log(R)).clamp(min=0.0, max=1.0)
+                mean_dominance_rho = float(rho[train_bool].mean().item())
+            else:
+                mean_dominance_rho = 0.0
+        else:
             mean_gate_entropy = 0.0
             mean_dominance_rho = 0.0
-            evidence_gate_kl = 0.0
-            mean_evidence_entropy = 0.0
 
+    # ---- Stats dict (backward-compatible keys) ------------------------
     stats: dict[str, float] = {
         "total": float(total.detach().item()),
         "l_cls": float(l_cls.detach().item()),
-        "l_intervention": float(l_intervention.detach().item()),
-        "l_trust": float(l_intervention.detach().item()),
-        "l_sparse": float(l_sparse.detach().item()),
+        "l_intervention": 0.0,           # removed (5-seed p=0.81 single, 0.36 combined)
+        "l_trust": 0.0,                  # alias of l_intervention, also removed
+        "l_sparse": 0.0,                 # removed (5-seed p=0.0609, closest to bar but fail)
         "mean_abs_delta_rel": mean_abs_delta_rel,
         "mean_intervention": mean_intervention,
-        "mean_intervention_judge_accepted": mean_intervention_acc,
-        "mean_intervention_judge_rejected": mean_intervention_rej,
-        "mean_intervention_base_correct": mean_intervention_base_correct,
-        "mean_intervention_base_wrong": mean_intervention_base_wrong,
-        "mean_alpha_llm": mean_alpha_llm,
-        "mean_alpha_llm_accepted": mean_alpha_acc,
-        "mean_alpha_llm_rejected": mean_alpha_rej,
+        "mean_intervention_judge_accepted": 0.0,
+        "mean_intervention_judge_rejected": 0.0,
+        "mean_intervention_base_correct": 0.0,
+        "mean_intervention_base_wrong": 0.0,
+        "mean_alpha_llm": 0.0,
+        "mean_alpha_llm_accepted": 0.0,
+        "mean_alpha_llm_rejected": 0.0,
         "mean_gate_entropy": mean_gate_entropy,
         "mean_dominance_rho": mean_dominance_rho,
-        "mean_evidence_entropy": mean_evidence_entropy,
-        "mean_evidence_gate_kl": evidence_gate_kl,
+        "mean_evidence_entropy": 0.0,    # L_sparse evidence-prior is gone
+        "mean_evidence_gate_kl": 0.0,    # L_sparse KL value is gone
     }
     return total, stats
+
+
+# Suppress repeated deprecation warnings per kwarg name.
+_WARNED: set[str] = set()
+
+
+def _warn_if_set(name: str, value, default) -> None:
+    if value is None:
+        return
+    if value == default:
+        return
+    if name in _WARNED:
+        return
+    _WARNED.add(name)
+    warnings.warn(
+        f"{name} is deprecated for the cls-only Phase 2 loss and is ignored. "
+        f"Per artifacts/tables/yelpchi_bwgnn_ablation_loss_arch_5seed.md the "
+        f"4-term loss is statistically indistinguishable from cls-only at 5 seeds.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
 
 
 __all__ = [
