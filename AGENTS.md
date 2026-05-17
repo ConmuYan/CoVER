@@ -420,6 +420,101 @@ scripts/pre_cache_base_outputs.py                (one-time base forward cache; r
 
 ---
 
+## 13. Idea-2B: Learned Evidence Extractor (8 cells × 5 seeds = 40 runs, paired-t vs Idea-1 canonical)
+
+### Motivation
+
+Idea-1 uses **hand-crafted 9-dim per-relation evidence** (structural A + feature-neighbor incoherence B + train-only prototype C). The obvious reviewer attack is: "Why exactly these 9 dimensions? Why not learned features?" Idea-2B answers this by **replacing the hand-crafted extractor with an end-to-end-trained learned extractor** that preserves all four safety contracts.
+
+### Architecture
+
+`evidence/learned_extractor.py` — `LearnedRelationEvidenceExtractor` (13.9K params):
+
+| Component | Role | Analogue in hand-crafted |
+|---|---|---|
+| Per-relation 2-layer symmetric-normalized GCN encoder | Learns structural representation | A: `log_degree_norm`, `degree_top10`, `degree_low` |
+| Per-relation MLP head consumes `[x, neighbor_mean, gcn_emb, fraud_dist_z, benign_dist_z, margin_z]` | Learns combination | B+C: quantile-based stats + prototype distances |
+| `prepare(x, relation_adjs)` | Caches sym-norm adj + neighbor-mean once per training run | Offline `build_relation_features.py` |
+| `forward(x, train_mask, train_labels)` → `(N, R*9)` | Drop-in compatible output | `load_relation_stats` |
+
+**Contracts preserved**:
+- **C2 Score-blind**: extractor inputs are raw X + relation adjacencies + train_mask + train_labels. NEVER sees base_logit/base_z.
+- **C3 Train-only prototype**: fraud/benign prototypes computed under `torch.no_grad()` over `train_mask & (train_labels == c)` only.
+- **C1 Frozen base**: independent module, no parameter sharing with base detector.
+- **C4 Bounded intervention**: downstream reasoner still applies `δ_max · tanh(u)`.
+
+**Trainer integration** (`scripts/train_phase2_reasoner.py`):
+- Config switch: `phase2_reasoner.evidence.source: learned` (default `hand_crafted`)
+- `load_relation_adjs_for_extractor()` loads per-relation sparse COO from `.mat`
+- `run_training()` recomputes `rel_features` online each epoch (train-mode for train step, eval-mode under `torch.no_grad()` for val/test)
+- Extractor parameters added to optimizer alongside reasoner's
+- `evidence_extractor.pt` saved alongside `reasoner.pt`
+
+### Ablation switches (Idea-2B module ablation)
+
+| Switch | Default | Ablation effect |
+|---|---|---|
+| `use_gcn_emb=True` | Include per-relation GCN structural signal | `False` → drops learned structural representation |
+| `use_proto_features=True` | Include train-only proto distances | `False` → drops train-only prototype features (mirrors Idea-1's `no_proto`) |
+| `encoder_shared=False` | R independent GCN encoders | `True` → single shared encoder + one-hot relation id (mirrors Idea-1's `shared_expert`) |
+
+### 8-cell verdict (YelpChi+Amazon × BWGNN/SAGE/GCN/GAT × 5 seeds, paired-t vs Idea-1 canonical)
+
+**Headline: 19/32 stat-sig wins; 11 ns positive; 2 ns losses (Δ<0.002).**
+
+#### AUPRC (primary)
+
+| Cell | canonical | **2B learned** | Δ | t | sig |
+|---|---:|---:|---:|---:|:---:|
+| YelpChi-BWGNN | 0.6089 | **0.6489** | **+0.040** | +11.5 | **★★★** |
+| YelpChi-SAGE | 0.6001 | **0.6520** | **+0.052** | +10.0 | **★★★** |
+| YelpChi-GCN | 0.4946 | **0.5904** | **+0.096** | +12.4 | **★★★** |
+| YelpChi-GAT | 0.5316 | **0.6340** | **+0.102** | +9.6 | **★★★** |
+| Amazon-BWGNN | 0.8683 | 0.8671 | −0.001 | −0.6 | ns |
+| Amazon-SAGE | 0.8336 | 0.8511 | +0.018 | +0.7 | ns |
+| Amazon-GCN | 0.4668 | **0.7006** | **+0.234** | +3.8 | **★** |
+| Amazon-GAT | 0.4592 | 0.5575 | +0.098 | +1.7 | ns |
+
+#### Cross-cell summary (4 metrics × 8 cells = 32 paired-t)
+
+| Metric | wins (sig) | wins (ns) | losses |
+|---|:---:|:---:|:---:|
+| AUPRC | **5** | 2 | 1 |
+| AUROC | **5** | 3 | 0 |
+| M-F1 | **5** | 3 | 0 |
+| G-Means | **4** | 3 | 1 |
+| **Total** | **19** | **11** | **2** |
+
+### Key findings
+
+1. **YelpChi dominance**: 15/16 stat-sig wins across 4 YelpChi cells × 4 metrics. Learned evidence strictly beats hand-crafted A/B/C on ALL YelpChi bases.
+2. **Amazon saturation**: strong bases (BWGNN/SAGE) → learned ≈ hand-crafted (no harm). Weak base (GCN) → +0.234 AUPRC ★. Confirms Idea-1's **base-strength × evidence-type interaction law**.
+3. **Contracts intact**: all 40 runs pass base_freeze_check; score-blind by architecture; train-only proto by mask.
+4. **Cost**: extractor 13.9K params, ~26s additional train time per seed.
+
+### Paper framing
+
+> "Why these 9 hand-crafted dims?" → "We let it learn under identical contracts; learned wins 19/32 stat-sig (incl. all 4 YelpChi ★★★) while never significantly underperforming on saturated cells."
+
+### Source artifacts
+
+```
+evidence/learned_extractor.py                                         (240 lines, 13.9K params)
+scripts/train_phase2_reasoner.py                                      (3 surgical backward-compat edits)
+scripts/aggregate_idea2b_vs_canonical.py                               (8-cell paired-t aggregator)
+scripts/run_idea2b_7cell_5seed.sh                                     (35-run orchestrator)
+configs/phase2_reasoner/ablation/idea2b_learned_extractor_*.yaml       (8 configs)
+configs/phase2_reasoner/ablation/idea2b_ablate_*.yaml                  (12 ablation configs)
+scripts/run_idea2b_ablation_yelpchi_5seed.sh                           (60-run ablation orchestrator)
+scripts/aggregate_idea2b_ablation.py                                   (ablation paired-t aggregator)
+artifacts/tables/idea2b_learned_vs_canonical_8cell_5seed.md            (8-cell verdict)
+artifacts/tables/idea2b_ablation_4base_5seed.md                        (module ablation verdict)
+artifacts/results/{yelpchi,amazon}/{base}/idea2b_learned_extractor/seed_*/   (40 canonical runs)
+artifacts/results/yelpchi/{base}/idea2b_ablate_{switch}/seed_*/             (60 ablation runs)
+```
+
+---
+
 ## Summary (TPAMI-grade narrative)
 
 ### One-sentence elevator pitch
@@ -436,7 +531,7 @@ scripts/pre_cache_base_outputs.py                (one-time base forward cache; r
 
 ### Operational one-liner (engineering-facing)
 
-CoVER-REL is a single-branch reasoner that fuses 9-dim score-blind anonymous relation statistics through per-relation MLP experts (independent by default; the cross-cell ablation shows a shared MLP with one-hot relation id is statistically indistinguishable, 0/32 sig on AUROC) and a softmax schema gate into a bounded `tanh` residual on the frozen base logit, trained end-to-end with pure BCE; it strictly satisfies score-blind / base-freeze / train-only-prototype / bounded-intervention contracts; across BWGNN/SAGE/GCN/GAT $\times$ YelpChi/Amazon (8 cells) the direction is positive 8/8 with 6/8 5-seed paired-$t$ significant; every retired auxiliary loss term and LLM-judge route is reported with its falsification statistic in `paper_negative_routes.md`.
+CoVER-REL is a single-branch reasoner that fuses 9-dim score-blind anonymous relation statistics through per-relation MLP experts (independent by default; the cross-cell ablation shows a shared MLP with one-hot relation id is statistically indistinguishable, 0/32 sig on AUROC) and a softmax schema gate into a bounded `tanh` residual on the frozen base logit, trained end-to-end with pure BCE; it strictly satisfies score-blind / base-freeze / train-only-prototype / bounded-intervention contracts; across BWGNN/SAGE/GCN/GAT $\times$ YelpChi/Amazon (8 cells) the direction is positive 8/8 with 6/8 5-seed paired-$t$ significant; every retired auxiliary loss term and LLM-judge route is reported with its falsification statistic in `paper_negative_routes.md`. **Idea-2B** replaces the hand-crafted 9-dim extractor with a learned 13.9K-param per-relation GCN+MLP extractor under identical contracts, yielding 19/32 stat-sig wins over the hand-crafted baseline (YelpChi: 15/16 sig; Amazon-GCN: +0.234 AUPRC ★).
 
 <!-- ARIS:BEGIN -->
 ## ARIS Skill Scope
