@@ -13,8 +13,11 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
-from evidence.relation_features import RELATION_STAT_NAMES
-from models.leqa_lora import LEQA_CARD_FIELDS
+# Legacy card-field slot count.  The old LEQA_CARD_FIELDS constant was
+# removed from models/leqa_lora in Commit 3; the fixed integer is
+# kept here so the legacy 37-token attention shape is preserved for
+# any code still calling this function.
+_N_LEGACY_CARD_SLOTS = 10
 
 
 # Fields that must NEVER appear in attention computation
@@ -68,7 +71,7 @@ def extract_attention(
         f"R*rel_stat_dim={R * rel_stat_dim}"
     )
 
-    n_card = len(LEQA_CARD_FIELDS)
+    n_card = _N_LEGACY_CARD_SLOTS
     T = n_card + R * rel_stat_dim
 
     attention = torch.zeros(N, T, device=device, dtype=dtype)

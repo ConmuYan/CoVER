@@ -20,7 +20,6 @@ from models.leqa_lora import (
     format_leqa_prompt,
     build_training_example,
     audit_leqa_output,
-    LEQA_CARD_FIELDS,
     LEQA_REASON_LABELS,
     LEQA_REASON_TO_ID,
 )
@@ -29,21 +28,42 @@ from models.leqa_lora import (
 class TestBuildTokenNames:
     def test_yelpchi_token_count(self):
         names = build_leqa_token_names(["RUR", "RSR", "RTR"])
-        assert len(names) == 37  # 10 card + 3*9 relation stats
+        # Packet-aligned vocab: 8*R + 4 = 28 for R=3
+        assert len(names) == 28
 
     def test_amazon_token_count(self):
         names = build_leqa_token_names(["UPU", "USU", "UVU"])
-        assert len(names) == 37
+        assert len(names) == 28
 
     def test_default_matches_yelpchi(self):
         default = get_default_token_names()
         yelpchi = build_leqa_token_names(["RUR", "RSR", "RTR"])
         assert default == yelpchi
 
-    def test_card_fields_first(self):
+    def test_relation_evidence_prefix_first(self):
+        """First 7*R = 21 tokens are relation_evidence dotted paths."""
         names = get_default_token_names()
-        for i, field in enumerate(LEQA_CARD_FIELDS):
-            assert names[i] == field
+        for i in range(21):
+            assert names[i].startswith("relation_evidence."), (
+                f"token {i} = {names[i]} should start with 'relation_evidence.'"
+            )
+
+    def test_graph_diagnostic_after_relation(self):
+        """Tokens 21-23 are graph_diagnostic_evidence."""
+        names = get_default_token_names()
+        for i in range(21, 24):
+            assert names[i].startswith("graph_diagnostic_evidence."), (
+                f"token {i} = {names[i]} should be graph_diagnostic"
+            )
+
+    def test_gate_evidence_last(self):
+        """Tokens 24-27 are gate_evidence (anchor + per-relation buckets)."""
+        names = get_default_token_names()
+        assert names[24] == "gate_evidence.anchor_relation"
+        for i in range(25, 28):
+            assert names[i].startswith(
+                "gate_evidence.optional_relation_gate_buckets."
+            ), f"token {i} = {names[i]} should be gate bucket"
 
 
 class TestParseLeqaJson:
@@ -103,18 +123,18 @@ class TestParseBatch:
 class TestLEQAModel:
     def test_num_tokens(self):
         model = LEQAModel()
-        assert model.num_tokens == 37
+        assert model.num_tokens == 28
 
     def test_uniform_quality(self):
         model = LEQAModel()
         q = model.uniform_quality(5)
-        assert q.shape == (5, 37)
+        assert q.shape == (5, 28)
         assert (q == 1.0).all()
 
     def test_random_quality(self):
         model = LEQAModel()
         q = model.random_quality(5)
-        assert q.shape == (5, 37)
+        assert q.shape == (5, 28)
         assert q.min() >= 0.0
         assert q.max() <= 1.0
 
@@ -124,8 +144,8 @@ class TestLEQAModel:
             {"token": model.token_names[0], "q": 0.1, "reason": "insufficient"},
         ]})]
         q, r = model.parse_outputs(raw)
-        assert q.shape == (1, 37)
-        assert r.shape == (1, 37)
+        assert q.shape == (1, 28)
+        assert r.shape == (1, 28)
         assert q[0, 0].item() == pytest.approx(0.1)
         assert r[0, 0].item() == LEQA_REASON_TO_ID["insufficient"]
 

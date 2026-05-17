@@ -26,29 +26,63 @@ from typing import Any
 import torch
 from torch import Tensor
 
-from evidence.vocab import EVIDENCE_SLOTS
-from evidence.relation_features import RELATION_STAT_NAMES
-
 logger = logging.getLogger(__name__)
 
-# ---- LEQA token vocabulary (T=37 = 10 card fields + 3 relations * 9 stats) ----
-
-LEQA_CARD_FIELDS: list[str] = list(EVIDENCE_SLOTS[:10])
+# ---- LEQA token vocabulary (T = 8*R + 4 = 28 for R=3) ----
 
 LEQA_REASON_LABELS = ["none", "noisy", "contradictory", "insufficient"]
 LEQA_REASON_TO_ID = {r: i for i, r in enumerate(LEQA_REASON_LABELS)}
 
 
 def build_leqa_token_names(relation_names: list[str]) -> list[str]:
-    """Build canonical LEQA token name list.
+    """Packet-aligned LEQA token vocabulary.
 
-    For YelpChi (RUR, RSR, RTR): 10 + 3*9 = 37 tokens.
-    For Amazon (UPU, USU, UVU): 10 + 3*9 = 37 tokens.
+    Returns dotted-path names matching the actual string-valued fields
+    in score-blind judge packets (verified against
+    ``artifacts/judge_packets/.../judge_packets.jsonl``).
+
+    Layout (for R = ``len(relation_names)``):
+
+    * ``7 * R`` relation-evidence bucket names per relation
+    * ``3`` graph-diagnostic bucket names
+    * ``1`` ``gate_evidence.anchor_relation``
+    * ``R`` ``gate_evidence.optional_relation_gate_buckets.{REL}``
+
+    Total: ``8 * R + 4`` tokens (= 28 for YelpChi / Amazon when R=3).
+
+    These names match what
+    ``scripts/generate_synth_token_quality.get_perturbable_fields`` emits,
+    so the per-token quality labels align with this vocabulary one-to-one.
+
+    The legacy ``LEQA_CARD_FIELDS`` (10 of ``EVIDENCE_SLOTS``) and
+    ``RELATION_STAT_NAMES`` (9 raw z-score names) were removed in
+    Commit 3 (Phase 3 cleanup); they are no longer part of this module.
     """
-    tokens = list(LEQA_CARD_FIELDS)
-    for rel in relation_names:
-        for stat in RELATION_STAT_NAMES:
-            tokens.append(f"{rel.upper()}_{stat}")
+    rels = [r.upper() for r in relation_names]
+    rel_buckets = [
+        "benign_prototype_distance_bucket",
+        "degree_bucket",
+        "feature_deviation_bucket",
+        "fraud_prototype_distance_bucket",
+        "neighbor_consistency_bucket",
+        "prototype_margin_bucket",
+        "zscore_outlier_bucket",
+    ]
+    graph_buckets = [
+        "band_response_bucket",
+        "embedding_neighbor_discrepancy_bucket",
+        "feature_structure_conflict_bucket",
+    ]
+
+    tokens: list[str] = []
+    for rel in rels:
+        for bucket in rel_buckets:
+            tokens.append(f"relation_evidence.{rel}.{bucket}")
+    for bucket in graph_buckets:
+        tokens.append(f"graph_diagnostic_evidence.{bucket}")
+    tokens.append("gate_evidence.anchor_relation")
+    for rel in rels:
+        tokens.append(f"gate_evidence.optional_relation_gate_buckets.{rel}")
     return tokens
 
 
@@ -263,7 +297,6 @@ def audit_leqa_output(raw_text: str) -> bool:
 
 
 __all__ = [
-    "LEQA_CARD_FIELDS",
     "LEQA_REASON_LABELS",
     "LEQA_REASON_TO_ID",
     "LEQAModel",
