@@ -285,3 +285,89 @@
 
 *Total: 260 runs (Idea-1: 160 + Idea-2B canonical: 40 + Idea-2B ablation: 60). Generated automatically.*
 
+---
+
+## 6. Idea-3 REL-Curriculum Active Learning — 2 cells × 4 AFs × 5 budgets × 5 seeds
+
+**Experiment design**: Active Learning loop with frozen CoVER-REL reasoner. Starting from 1%-labeled seed (stratified), the acquisition function selects nodes to label at each round up to the target budget. The reasoner is retrained from scratch on the labeled subset each round (30 epochs, early stopping). Evaluated on held-out validation set (AUPRC).
+
+**Acquisition functions**:
+- `random` — uniform random baseline
+- `uncertainty` — base-logit entropy (highest entropy first)
+- `mitigate_af` — MITIGATE-style entropy + anomaly-score difference (w=0.5)
+- `rel_af` — REL diagnostic signals: |Δ_rel| + gate entropy + base↔REL flip (ours)
+
+**Safety contracts preserved**: score-blind labels, frozen base, train-only prototype, bounded intervention.
+
+### 6.1 AUPRC vs Budget — YelpChi-BWGNN (mean ± sd, 5 seeds)
+
+| Acquisition | 1% | 5% | 10% | 20% | 40% |
+|---|---:|---:|---:|---:|---:|
+| random | 0.5712 ± 0.0171 | 0.5878 ± 0.0087 | 0.5895 ± 0.0088 | 0.5902 ± 0.0113 | 0.5915 ± 0.0110 |
+| uncertainty | 0.5781 ± 0.0237 | 0.5879 ± 0.0084 | 0.5883 ± 0.0097 | 0.5887 ± 0.0108 | 0.5894 ± 0.0113 |
+| mitigate_af | 0.5621 ± 0.0169 | 0.5910 ± 0.0100 | 0.5908 ± 0.0091 | 0.5905 ± 0.0091 | 0.5901 ± 0.0105 |
+| **rel_af** | 0.5398 ± 0.0297 | 0.5768 ± 0.0186 | 0.5831 ± 0.0114 | 0.5882 ± 0.0134 | 0.5892 ± 0.0125 |
+
+### 6.2 AUPRC vs Budget — YelpChi-GAT (mean ± sd, 5 seeds)
+
+| Acquisition | 1% | 5% | 10% | 20% | 40% |
+|---|---:|---:|---:|---:|---:|
+| random | 0.3834 ± 0.0284 | 0.4272 ± 0.0213 | 0.4290 ± 0.0167 | 0.4315 ± 0.0227 | 0.4313 ± 0.0263 |
+| uncertainty | 0.3975 ± 0.0379 | 0.4256 ± 0.0162 | 0.4313 ± 0.0135 | 0.4289 ± 0.0149 | 0.4276 ± 0.0144 |
+| mitigate_af | 0.3784 ± 0.0346 | 0.4278 ± 0.0137 | 0.4321 ± 0.0099 | 0.4283 ± 0.0195 | 0.4315 ± 0.0178 |
+| **rel_af** | 0.3886 ± 0.0228 | 0.4344 ± 0.0072 | 0.3880 ± 0.0619 | 0.4369 ± 0.0129 | 0.4507 ± 0.0101 |
+
+### 6.3 Paired-t: REL-AF vs Baselines — YelpChi-BWGNN
+
+Δ = REL-AUPRC − baseline. Positive = REL wins.
+
+| Baseline | Budget | Δ | t | sig |
+|---|:---:|---:|---:|:---:|
+| random | 1% | −0.0314 | −3.47 | ★ |
+| random | 5% | −0.0109 | −2.05 | ns |
+| random | 10% | −0.0065 | −2.83 | ★ |
+| random | 20% | −0.0020 | −1.28 | ns |
+| random | 40% | −0.0023 | −1.30 | ns |
+| uncertainty | 1% | −0.0383 | −3.54 | ★ |
+| uncertainty | 5% | −0.0111 | −2.04 | ns |
+| uncertainty | 10% | −0.0052 | −2.50 | trend |
+| uncertainty | 20% | −0.0004 | −0.23 | ns |
+| uncertainty | 40% | −0.0001 | −0.08 | ns |
+| mitigate_af | 1% | −0.0223 | −2.87 | ★ |
+| mitigate_af | 5% | −0.0141 | −3.11 | ★ |
+| mitigate_af | 10% | −0.0078 | −3.81 | ★ |
+| mitigate_af | 20% | −0.0023 | −1.02 | ns |
+| mitigate_af | 40% | −0.0009 | −0.50 | ns |
+
+### 6.4 Paired-t: REL-AF vs Baselines — YelpChi-GAT
+
+| Baseline | Budget | Δ | t | sig |
+|---|:---:|---:|---:|:---:|
+| random | 1% | +0.0052 | +0.33 | ns |
+| random | 5% | +0.0072 | +0.59 | ns |
+| random | 10% | −0.0410 | −1.68 | ns |
+| random | 20% | +0.0053 | +0.62 | ns |
+| random | 40% | +0.0194 | +1.65 | ns |
+| uncertainty | 1% | −0.0089 | −0.48 | ns |
+| uncertainty | 5% | +0.0087 | +0.93 | ns |
+| uncertainty | 10% | −0.0433 | −1.77 | ns |
+| uncertainty | 20% | +0.0080 | +1.49 | ns |
+| uncertainty | 40% | +0.0231 | +4.24 | ★ |
+| mitigate_af | 1% | +0.0102 | +0.40 | ns |
+| mitigate_af | 5% | +0.0065 | +0.93 | ns |
+| mitigate_af | 10% | −0.0441 | −1.55 | ns |
+| mitigate_af | 20% | +0.0086 | +1.01 | ns |
+| mitigate_af | 40% | +0.0192 | +2.45 | trend |
+
+### 6.5 Key Findings
+
+**BWGNN**: REL-AF **underperforms** all baselines at low budgets (1–10%), losing significantly to random (1%, 10%), uncertainty (1%), and mitigate (1%, 5%, 10%). At higher budgets (20–40%), all AFs converge to similar AUPRC (~0.589) and differences vanish. REL-AF achieves 0/15 significant wins.
+
+**GAT**: Most comparisons are non-significant. REL-AF shows one significant win at 40% budget vs uncertainty (Δ = +0.023, t = +4.24, ★). The GAT 10% REL-AF point has high variance (σ = 0.062 vs ~0.01 for others), driven by seed_456 outlier. REL-AF achieves 1/15 significant wins.
+
+**Diagnosis**: The REL diagnostic signals (|Δ_rel|, gate entropy, prediction flip) are effective for post-hoc error detection (Idea 2B) but do not translate to superior node selection in AL. At low budgets, REL-AF selects high-residual nodes that are hard to learn from, while simple uncertainty/random baselines explore more uniformly. At high budgets, the labeled set is large enough that AF choice is irrelevant — the reasoner achieves near-ceiling performance regardless.
+
+**Verdict**: REL-AF as an AL acquisition function shows marginal-to-negative improvement over baselines. The REL diagnostic value lies in *post-hoc correction* (Idea 2A/2B), not *active selection*.
+
+*Total: 200 AL runs (YelpChi-BWGNN: 100 + YelpChi-GAT: 100). 4 AFs × 5 budgets × 5 seeds × 2 cells.*
+
