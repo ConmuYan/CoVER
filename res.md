@@ -409,3 +409,42 @@
 
 *Total: 200 AL runs (YelpChi-BWGNN: 100 + YelpChi-GAT: 100). 4 AFs × 5 budgets × 5 seeds × 2 cells.*
 
+---
+
+## 8. Idea-3 LLM-Designed Feature Composites — YelpChi-BWGNN × 5 seeds
+
+**Method**: Use Qwen3-4B-Instruct to design composite fraud features from graph statistics. The LLM acts as a "fraud semantic consultant" — it designs the feature space, not scores individual nodes.
+
+**LLM-designed composites** (from observed fraud/benign statistics):
+- `f1 × f3` (RUR × RTR fraud neighbor rate interaction)
+- `f2 / (f5 + 0.1)` (RSR fraud rate / RSR degree)
+- `f4 × log(f6 + 1)` (log RUR degree × log log RTR degree)
+- `sqrt(f1 + f2)` (sqrt of RUR + RSR fraud rates — best single composite)
+- `max(f3, f5) - f4` (max RTR fraud / RSR degree - RUR degree)
+
+where f1-3 = fraud neighbor rates (RUR/RSR/RTR), f4-6 = log-degrees.
+
+### 8.1 Per-seed AUPRC
+
+| Seed | Base only | Base+REL (CoVER-REL) | Base+LLM | Base+REL+LLM |
+|------|----------:|---------------------:|---------:|-------------:|
+| 42   | 0.5003    | 0.6085               | **0.6669** | 0.6680       |
+| 123  | 0.5232    | 0.6146               | **0.6749** | 0.6713       |
+| 456  | 0.4997    | 0.6061               | **0.6610** | 0.6647       |
+| 789  | 0.5121    | 0.6148               | **0.6671** | 0.6683       |
+| 2026 | 0.4816    | 0.5954               | **0.6602** | 0.6679       |
+| **Mean** | **0.5034** | **0.6079**       | **0.6660** | **0.6680** |
+
+### 8.2 Paired-t tests (df=4)
+
+| Comparison | Δ | t | p | sig |
+|---|---:|---:|---:|:---:|
+| Base+LLM vs Base+REL | **+0.058** | **+26.9** | <0.0001 | **★★★** |
+| Base+REL+LLM vs Base+REL | **+0.060** | **+18.6** | <0.0001 | **★★★** |
+
+### 8.3 Key findings
+
+1. **Base+LLM beats Base+REL on 5/5 seeds** (t=+26.9, ★★★). A simple LR with 5 LLM-designed features outperforms the full CoVER-REL GNN reasoning framework.
+2. **Base+REL+LLM is best** (0.6680), marginal over Base+LLM (+0.002). CoVER-REL adds small complementary signal on top of LLM features.
+3. **LLM's value is feature design, not node scoring**: the LLM designs `sqrt(fraud_RUR + fraud_RSR)` — a non-linear aggregation that beats simple average. This is a one-time, dataset-level contribution.
+
