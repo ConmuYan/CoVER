@@ -283,7 +283,7 @@
 
 ---
 
-## 6. Idea-2C REL Distillation Adapter — 2 cells × 5 seeds (fixed, score-blind compliant)
+## 6. Idea-2C REL Distillation Adapter — 8 cells × 5 seeds (fixed, score-blind compliant)
 
 **Goal**: Distill CoVER-REL teacher into a lightweight adapter (4132 params, 0.26× teacher) that preserves score-blind contract. Adapter MLP trunk sees [base_z ; rel_features] only (NO base_logit). KL direction: KL(adapter ‖ teacher).
 
@@ -291,17 +291,26 @@
 
 | Cell | Base-only | Distill Adapter | Full REL Teacher | % REL gain | Distill vs Teacher |
 |---|---:|---:|---:|---:|---|
-| YelpChi-BWGNN | 0.5034 ± 0.0155 | 0.6008 ± 0.0105 | 0.6089 ± 0.0083 | **92.3%** | Δ=−0.008 ★★ (t=+8.18) |
-| YelpChi-SAGE | 0.4595 ± 0.0137 | 0.5899 ± 0.0060 | 0.6001 ± 0.0105 | **92.7%** | Δ=−0.010 ★ (t=+3.44) |
+| YelpChi-BWGNN | 0.5034 | 0.6008 ± 0.0105 | 0.6089 ± 0.0083 | **92.3%** | Δ=−0.008 ★★ (t=+8.18) |
+| YelpChi-SAGE | 0.4595 | 0.5899 ± 0.0060 | 0.6001 ± 0.0105 | **92.7%** | Δ=−0.010 ★ (t=+3.44) |
+| YelpChi-GCN | 0.2226 | 0.4757 ± 0.0157 | 0.4946 ± 0.0149 | **93.0%** | Δ=−0.019 ★ (t=+4.50) |
+| YelpChi-GAT | 0.2061 | 0.4830 ± 0.0119 | 0.5316 ± 0.0136 | **85.1%** | Δ=−0.049 ★★★ (t=+11.61) |
+| Amazon-BWGNN | 0.8590 | 0.8663 ± 0.0280 | 0.8683 ± 0.0269 | **78.4%** | Δ=−0.002 ns (t=+1.41) |
+| Amazon-SAGE | 0.7894 | 0.8202 ± 0.0640 | 0.8336 ± 0.0546 | **69.8%** | Δ=−0.013 ns (t=+2.00) |
+| Amazon-GCN | 0.2549 | 0.4351 ± 0.0994 | 0.4668 ± 0.1356 | **85.0%** | Δ=−0.032 ns (t=+1.65) |
+| Amazon-GAT | 0.3384 | 0.4553 ± 0.2634 | 0.4592 ± 0.3055 | **96.8%** | Δ=−0.004 ns (t=+0.11) |
 
-### 6.2 Inference efficiency (from prior benchmark, seed_42)
+**Summary**: Teacher significantly beats distill in 4/8 cells (all YelpChi). On Amazon (saturated bases), distill ≈ teacher (4/4 ns). Distill captures 85-93% of REL gain on YelpChi, 70-97% on Amazon.
 
-| Pipeline | BWGNN (ms) | GAT (ms) |
-|---|---:|---:|
-| Base-only | 0.10 | 0.02 |
-| Full CoVER-REL | 2.64 | 2.42 |
-| Distill Adapter | 0.96 | 0.94 |
-| **Speedup** | **2.75×** | **2.58×** |
+### 6.2 Inference Speed (3 cells × 5 seeds, fixed adapter)
+
+| Cell | Base-only (ms) | Full REL (ms) | Distill Adapter (ms) | Speedup |
+|---|---:|---:|---:|---:|
+| YelpChi-BWGNN | 0.016 | 2.36 | 0.92 | **2.58×** |
+| YelpChi-SAGE | 0.016 | 2.36 | 0.92 | **2.58×** |
+| YelpChi-GAT | 0.017 | 2.37 | 0.92 | **2.61×** |
+
+**Mean speedup**: 2.59× across 15 benchmarks (3 cells × 5 seeds).
 
 ### 6.3 Contracts
 
