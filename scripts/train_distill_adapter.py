@@ -205,6 +205,8 @@ def evaluate_adapter(
     adapter.eval()
     out = adapter(base_z[mask], base_logits[mask], rel_features[mask].to(device))
     prob = torch.sigmoid(out["final_logit"]).cpu().numpy()
+    # Sanitize NaN (can occur if base_logits contain extreme values)
+    prob = np.nan_to_num(prob, nan=0.5, posinf=1.0, neginf=0.0)
     y_np = y[mask].cpu().numpy()
 
     if threshold is not None:
@@ -229,6 +231,7 @@ def evaluate_base_only(
 ) -> dict:
     """Evaluate base-only (no REL, no adapter)."""
     prob = torch.sigmoid(base_logits[mask]).cpu().numpy()
+    prob = np.nan_to_num(prob, nan=0.5, posinf=1.0, neginf=0.0)
     y_np = y[mask].cpu().numpy()
     if threshold is not None:
         metrics = evaluate_with_threshold(y_np, prob, threshold)
@@ -258,6 +261,7 @@ def evaluate_teacher(
     teacher.eval()
     out = teacher(base_z[mask], base_logits[mask], rel_features[mask].to(device))
     prob = torch.sigmoid(out["final_logit"]).cpu().numpy()
+    prob = np.nan_to_num(prob, nan=0.5, posinf=1.0, neginf=0.0)
     y_np = y[mask].cpu().numpy()
     if threshold is not None:
         metrics = evaluate_with_threshold(y_np, prob, threshold)
