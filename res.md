@@ -283,11 +283,40 @@
 
 ---
 
-*Total: 260 runs (Idea-1: 160 + Idea-2B canonical: 40 + Idea-2B ablation: 60). Generated automatically.*
+## 6. Idea-2C REL Distillation Adapter — 2 cells × 5 seeds (fixed, score-blind compliant)
+
+**Goal**: Distill CoVER-REL teacher into a lightweight adapter (4132 params, 0.26× teacher) that preserves score-blind contract. Adapter MLP trunk sees [base_z ; rel_features] only (NO base_logit). KL direction: KL(adapter ‖ teacher).
+
+### 6.1 Per-cell AUPRC (mean ± sd)
+
+| Cell | Base-only | Distill Adapter | Full REL Teacher | % REL gain | Distill vs Teacher |
+|---|---:|---:|---:|---:|---|
+| YelpChi-BWGNN | 0.5034 ± 0.0155 | 0.6008 ± 0.0105 | 0.6089 ± 0.0083 | **92.3%** | Δ=−0.008 ★★ (t=+8.18) |
+| YelpChi-SAGE | 0.4595 ± 0.0137 | 0.5899 ± 0.0060 | 0.6001 ± 0.0105 | **92.7%** | Δ=−0.010 ★ (t=+3.44) |
+
+### 6.2 Inference efficiency (from prior benchmark, seed_42)
+
+| Pipeline | BWGNN (ms) | GAT (ms) |
+|---|---:|---:|
+| Base-only | 0.10 | 0.02 |
+| Full CoVER-REL | 2.64 | 2.42 |
+| Distill Adapter | 0.96 | 0.94 |
+| **Speedup** | **2.75×** | **2.58×** |
+
+### 6.3 Contracts
+
+- **Score-blind**: trunk input = [base_z ; rel_features], no base_logit ✅
+- **Bounded**: delta_max · tanh(head_delta(h)) ✅
+- **Zero-init**: initial output = base-only (do-nothing) ✅
+- **Params**: 4132 (0.26× teacher 15750) ✅
 
 ---
 
-## 6. Idea-3 REL-Curriculum Active Learning — 2 cells × 4 AFs × 5 budgets × 5 seeds
+*Total: 470 runs (Idea-1: 160 + Idea-2B canonical: 40 + Idea-2B ablation: 60 + Idea-2C distill: 10 + Idea-3 AL: 200). Generated automatically.*
+
+---
+
+## 7. Idea-3 REL-Curriculum Active Learning — 2 cells × 4 AFs × 5 budgets × 5 seeds
 
 **Experiment design**: Active Learning loop with frozen CoVER-REL reasoner. Starting from 1%-labeled seed (stratified), the acquisition function selects nodes to label at each round up to the target budget. The reasoner is retrained from scratch on the labeled subset each round (30 epochs, early stopping). Evaluated on held-out validation set (AUPRC).
 
