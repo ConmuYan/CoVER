@@ -186,20 +186,20 @@
     },
     {
       "path": "res.md",
-      "accessCount": 16,
-      "lastAccessed": 1779175771163,
+      "accessCount": 17,
+      "lastAccessed": 1779176808055,
+      "type": "file"
+    },
+    {
+      "path": "scripts/idea3_multi_llm_scaling.py",
+      "accessCount": 15,
+      "lastAccessed": 1779176367984,
       "type": "file"
     },
     {
       "path": "scripts/idea3_full_benchmark.py",
       "accessCount": 8,
       "lastAccessed": 1779118401775,
-      "type": "file"
-    },
-    {
-      "path": "scripts/idea3_multi_llm_scaling.py",
-      "accessCount": 6,
-      "lastAccessed": 1779121586910,
       "type": "file"
     },
     {
@@ -260,6 +260,12 @@
       "path": "AGENTS.md",
       "accessCount": 2,
       "lastAccessed": 1779121152555,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/results/idea3_scaling/plm_adapter_results.json",
+      "accessCount": 2,
+      "lastAccessed": 1779176761379,
       "type": "file"
     },
     {

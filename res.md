@@ -488,16 +488,28 @@ Our summary-only approach (showing only aggregated class statistics to the LLM) 
 
 ### 8.7 Multi-LLM Scaling (YelpChi-BWGNN seed_42, quick screen)
 
-| Model | Params | AUPRC | Generated Formulas |
+| Model | Params | AUPRC | Generated / Selected Formulas |
 |---|---:|---:|---|
 | qwen3-0.6b | 600M | 0.5003 | Repeats input features (no composite) |
 | qwen3-4b | 4.0B | 0.5003 | Repeats input features (no composite) |
-| **qwen3-4b-instruct** | **4.0B** | **0.6641** | **5 meaningful composites (f1+f3-f2, sqrt(f4*f5)/(f6+1), ...)** |
+| **qwen3-4b-instruct** | **4.0B** | **0.6641** | **Open-vocabulary: f1+f3-f2, sqrt(f4*f5)/(f6+1), max-min(f1,f2,f3), log(1+f1*f5), f4/f6-f5/f6** |
 | qwen3-8b | 8.0B | 0.5003 | Repeats input features (no composite) |
-| bert-base (PLM adapter) | 110M | 0.6669 | Same 5 hardcoded candidates, learned weights |
-| roberta-base (PLM adapter) | 125M | 0.6669 | Same 5 hardcoded candidates, learned weights |
+| bert-base (PLM, REINFORCE-select from 20-pool) | 110M | **0.6903** | f4*log(f6+1), f2*f5, f3*f6, f1*f4, sqrt(f4*f5) |
+| roberta-base (PLM, REINFORCE-select from 20-pool) | 125M | **0.6838** | f1*f4, max(f3,f5)-f4, f1-f2, sqrt(f1+f2), sqrt(f4*f5) |
 
-**Key finding**: Only instruction-tuned LLMs (Qwen3-4B-Instruct) can design meaningful composite formulas. Base models (0.6B-8B) simply restate input features. PLM adapters (BERT/RoBERTa) learn weights for pre-selected formulas but cannot generate new ones. **Scaling law does not hold — instruction-following ability is the bottleneck, not parameter count.**
+**Two-stage decomposition of LLM contribution**:
+
+1. **Pool design (open-vocabulary brainstorming)** — Qwen3-4B-Instruct generates a 20-formula candidate pool de novo from statistical summaries alone. Without this LLM-brainstormed pool, the REINFORCE selector has nothing to choose from. This is the irreducible LLM contribution.
+
+2. **Selection within pool** — Given the same 20-candidate pool, PLMs (BERT/RoBERTa) trained via REINFORCE on val AUPRC find slightly better 5-subsets (0.6903/0.6838) than Qwen3-Instruct's one-shot pick (0.6641). **Qwen3-Instruct's zero-shot selection captures 96.2% of the REINFORCE-optimal AUPRC** — instruction alignment alone yields near-selection-optimal subsets without RL.
+
+**Key findings**:
+
+- **Scaling law collapses on open-vocabulary generation**: base Qwen3 (0.6B / 4B / 8B) all collapse to base-only AUPRC (0.5003) by restating input features verbatim. Only the instruction-tuned 4B variant produces meaningful composites. Param count is not the gate.
+- **Encoder PLMs cannot generate new candidates** — BERT/RoBERTa have no autoregressive head. Their role is bounded to *selection from a pre-designed pool*; the pool itself must come from an instruction-tuned LLM.
+- **LLM-generated pool is the bottleneck, not selection within it**: the 4.4 pp gap between Qwen3-Instruct (0.6641) and BERT-REINFORCE (0.6903) is small relative to the 16.4 pp gap between pool-less base-only (0.5003) and any pool-using method.
+
+**Implementation note**: A prior version of `phase4_plm_adapter` hard-coded `selected_indices = [0..4]` and used a detached numpy weight vector, so the PLM never influenced inference and two different PLMs converged to identical test AUPRC (0.6669). The current version (commit `<follow-up>`) implements REINFORCE selection from the 20-pool with Gumbel-top-k sampling and val-AUPRC reward. See `scripts/idea3_multi_llm_scaling.py:phase4_plm_adapter` for the fixed pipeline.
 
 ### 8.8 Leakage Audit
 

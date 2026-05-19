@@ -34,6 +34,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from scipy.io import loadmat
 from scipy.sparse import issparse, coo_matrix, csr_matrix
 from sklearn.linear_model import LogisticRegression
@@ -495,13 +496,23 @@ def phase3_full_benchmark(top_models: list[str], llm_results: dict, device: str)
 
 # ─── Phase 4: PLM Adapter (BERT/RoBERTa) ────────────────────────────────────
 class PLMFeatureAdapter(torch.nn.Module):
-    """BERT/RoBERTa + regression head for feature weight prediction.
+    """BERT/RoBERTa + selection head for candidate formula selection.
 
-    Input: textual description of graph statistics
-    Output: 5 scalar feature weights (used as coefficients for composite features)
-    Training: reward-weighted regression using train AUPRC as reward
+    Input : textual description of graph statistics.
+    Output: selection logits over a fixed 20-candidate pool.
+    Training: REINFORCE with Gumbel-top-k sampling. Reward = val AUPRC −
+        running baseline. This makes the PLM actually learn which composites
+        to select for each dataset — gradients flow from val AUPRC back into
+        the selection head and the PLM encoder.
+
+    The previous implementation hard-coded `selected_indices = [0..4]` and
+    used a detached numpy weight vector to "weight" them, so the PLM never
+    influenced inference. Two different PLMs converged to identical test
+    AUPRC because the LR head silently re-learned weights over the same 5
+    fixed features. This version makes selection itself the learned object.
     """
-    def __init__(self, plm_name: str, n_features: int = 5, freeze_plm: bool = False):
+    def __init__(self, plm_name: str, n_candidates: int = 20, n_select: int = 5,
+                 freeze_plm: bool = False):
         super().__init__()
         from transformers import AutoModel
         self.plm = AutoModel.from_pretrained(plm_name)
@@ -509,19 +520,19 @@ class PLMFeatureAdapter(torch.nn.Module):
         if freeze_plm:
             for param in self.plm.parameters():
                 param.requires_grad = False
-        self.head = torch.nn.Sequential(
+        self.select_head = torch.nn.Sequential(
             torch.nn.Linear(hidden_size, 256),
             torch.nn.ReLU(),
             torch.nn.Dropout(0.1),
-            torch.nn.Linear(256, n_features),
-            torch.nn.Tanh(),  # weights in [-1, 1]
+            torch.nn.Linear(256, n_candidates),
         )
+        self.n_candidates = n_candidates
+        self.n_select = n_select
 
     def forward(self, input_ids, attention_mask):
         out = self.plm(input_ids=input_ids, attention_mask=attention_mask)
         cls = out.last_hidden_state[:, 0, :]  # [CLS] token
-        weights = self.head(cls)
-        return weights
+        return self.select_head(cls)  # (B, n_candidates)
 
 
 def make_stat_description(dataset: str, features: dict, rel_names: list, train_mask: np.ndarray, y: np.ndarray) -> str:
@@ -571,9 +582,23 @@ def generate_candidate_formulas():
     return candidates
 
 
-def phase4_plm_adapter(plm_name: str, model_info: dict, device: str, n_epochs: int = 50) -> dict:
-    """Train PLM adapter using reward-weighted regression."""
-    print(f"\n  Training PLM adapter: {plm_name}")
+def phase4_plm_adapter(plm_name: str, model_info: dict, device: str, n_epochs: int = 80,
+                        rl_seed: int = 0) -> dict:
+    """Train PLM adapter via REINFORCE candidate selection.
+
+    Pipeline (per epoch):
+      1. PLM(text) → 20-d selection logits
+      2. Gumbel-top-k sample → 5 distinct candidate indices (no replacement)
+      3. LR(base_logit, selected 5 features) on train → val AUPRC = reward
+      4. REINFORCE update: loss = −(reward − running_baseline) · Σ log_prob[selected]
+
+    Final result is the val-best selection re-evaluated on the test set. Two
+    different PLMs that converge to different selections now produce
+    genuinely different test AUPRC (previously they collided because
+    selection was hard-coded and the LR head silently re-fit over the same
+    5 fixed features).
+    """
+    print(f"\n  Training PLM adapter (REINFORCE-select): {plm_name}")
 
     dataset, base, seed = "yelpchi", "bwgnn", 42
     mat = loadmat("datasets/YelpChi.mat")
@@ -593,91 +618,99 @@ def phase4_plm_adapter(plm_name: str, model_info: dict, device: str, n_epochs: i
         adjs[name] = csr_matrix((np.ones(len(sp.row)), (sp.row, sp.col)), shape=(N, N))
     features, _ = compute_graph_stats(dataset, data, adjs)
 
-    # Create textual description
     desc = make_stat_description(dataset, features, rel_names, train_mask, y)
 
-    # Tokenize
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_info["model_id"])
     enc = tokenizer(desc, return_tensors="pt", max_length=256, truncation=True, padding="max_length")
     input_ids = enc["input_ids"].to(device)
     attention_mask = enc["attention_mask"].to(device)
 
-    # Create model
-    plm_adapter = PLMFeatureAdapter(model_info["model_id"], n_features=5, freeze_plm=False).to(device)
+    candidate_formulas = generate_candidate_formulas()
+    n_candidates = len(candidate_formulas)
+    n_select = 5
+
+    plm_adapter = PLMFeatureAdapter(
+        model_info["model_id"],
+        n_candidates=n_candidates,
+        n_select=n_select,
+        freeze_plm=False,
+    ).to(device)
     optimizer = torch.optim.AdamW(plm_adapter.parameters(), lr=1e-4, weight_decay=0.01)
 
     X_base = base_logit.reshape(-1, 1)
-    candidate_formulas = generate_candidate_formulas()
-
-    # Pre-compute candidate feature matrix
     candidate_feats = build_composite_features(features, rel_names, candidate_formulas)
-    # Shape: (N, 20)
+    # Shape: (N, n_candidates)
 
-    best_auprc = 0.0
-    best_weights = None
-    best_formulas = None
+    # Deterministic RL seed so REINFORCE rollouts are reproducible across runs.
+    rng = torch.Generator(device=device).manual_seed(int(rl_seed))
+
+    best_val = 0.0
+    best_indices = None
+    best_test = {"auprc": 0.0, "roc_auc": 0.0}
+    baseline = 0.5
+    baseline_momentum = 0.9
 
     for epoch in range(n_epochs):
         plm_adapter.train()
-        weights = plm_adapter(input_ids, attention_mask)  # (1, 5)
-        weights_np = weights.detach().cpu().numpy().flatten()
+        logits = plm_adapter(input_ids, attention_mask).squeeze(0)  # (n_candidates,)
+        # Gumbel-top-k for sampling 5 distinct indices without replacement.
+        gumbel = -torch.log(
+            -torch.log(torch.rand(n_candidates, generator=rng, device=device) + 1e-20) + 1e-20
+        )
+        _, selected_idx = (logits + gumbel).topk(n_select)
+        selected_np = selected_idx.detach().cpu().numpy()
 
-        # Use the 5 adapter weights to select and weight 5 pre-selected candidate formulas
-        selected_indices = [0, 1, 2, 3, 4]
-        selected_feats = candidate_feats[:, selected_indices]  # N × 5
+        # Evaluate selection: train LR on (base_logit, 5 selected features), report val AUPRC.
+        sel_feats = candidate_feats[:, selected_np]
+        X_combo = np.column_stack([X_base, sel_feats])
+        val_metrics = eval_lr(
+            X_combo[train_mask], y[train_mask],
+            X_combo[val_mask], y[val_mask], seed,
+        )
+        val_auprc = val_metrics["auprc"]
 
-        # Weighted sum
-        plm_adapter.eval()
-        with torch.no_grad():
-            w = weights.squeeze().cpu().numpy()  # (5,)
-        composite = (selected_feats * w[np.newaxis, :]).sum(axis=1)  # (N,)
-
-        # Evaluate
-        X_combo = np.column_stack([X_base, composite.reshape(-1, 1)])
-        train_metrics = eval_lr(X_combo[train_mask], y[train_mask], X_combo[val_mask], y[val_mask], seed)
-        val_auprc = train_metrics["auprc"]
-
-        # Reward-weighted regression loss
-        # Reward = val_auprc, loss = -reward * log_prob (simplified as MSE with reward scaling)
-        plm_adapter.train()
-        weights = plm_adapter(input_ids, attention_mask)
-        # Encourage weights that produce higher AUPRC
-        # Use REINFORCE-style: loss = -reward * sum(weights^2) (regularization towards good weights)
-        reward = val_auprc - 0.5  # center around 0.5
-        reg_loss = torch.sum(weights ** 2)
-        loss = -reward * reg_loss + 0.01 * reg_loss
+        # REINFORCE update using running-mean baseline (variance reduction).
+        log_probs = F.log_softmax(logits, dim=-1)
+        log_prob_sum = log_probs[selected_idx].sum()
+        advantage = val_auprc - baseline
+        loss = -advantage * log_prob_sum
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        if val_auprc > best_auprc:
-            best_auprc = val_auprc
-            best_weights = w.tolist()
-            best_formulas = [candidate_formulas[i] for i in selected_indices]
+        baseline = baseline_momentum * baseline + (1.0 - baseline_momentum) * val_auprc
+
+        if val_auprc > best_val:
+            best_val = val_auprc
+            best_indices = selected_np.tolist()
+            best_test = eval_lr(
+                X_combo[train_mask], y[train_mask],
+                X_combo[test_mask], y[test_mask], seed,
+            )
 
         if epoch % 10 == 0:
-            print(f"    Epoch {epoch}: val_AUPRC={val_auprc:.4f}  loss={loss.item():.4f}  weights={w.round(3).tolist()}")
+            print(
+                f"    Epoch {epoch}: val_AUPRC={val_auprc:.4f}  "
+                f"baseline={baseline:.4f}  adv={advantage:+.4f}  sel={selected_np.tolist()}"
+            )
 
-    # Final evaluation on test set
-    if best_formulas:
-        final_feats = build_composite_features(features, rel_names, best_formulas)
-        X_final = np.column_stack([X_base, final_feats])
-        test_metrics = eval_lr(X_final[train_mask], y[train_mask], X_final[test_mask], y[test_mask], seed)
-    else:
-        test_metrics = {"auprc": 0.0, "roc_auc": 0.0}
-
-    print(f"  {plm_name} best: val_AUPRC={best_auprc:.4f}  test_AUPRC={test_metrics['auprc']:.4f}")
+    best_formulas = [candidate_formulas[i] for i in best_indices] if best_indices else None
+    print(
+        f"  {plm_name} best: val_AUPRC={best_val:.4f}  test_AUPRC={best_test['auprc']:.4f}  "
+        f"selected_indices={best_indices}"
+    )
 
     return {
         "model": plm_name,
         "params": model_info["params"],
         "best_formulas": best_formulas,
-        "best_weights": best_weights,
-        "val_auprc": best_auprc,
-        "test_auprc": test_metrics["auprc"],
-        "test_roc_auc": test_metrics["roc_auc"],
+        "best_indices": best_indices,
+        "best_weights": None,  # kept for back-compat with prior schema
+        "val_auprc": best_val,
+        "test_auprc": best_test["auprc"],
+        "test_roc_auc": best_test["roc_auc"],
     }
 
 
@@ -880,7 +913,12 @@ def main():
         plm_results = []
         for plm_name, plm_info in PLM_MODELS.items():
             try:
-                result = phase4_plm_adapter(plm_name, plm_info, args.device, n_epochs=50)
+                # REINFORCE seed mirrors PLM ordering so BERT/RoBERTa rollouts
+                # are reproducible but distinct.
+                rl_seed = 42 + abs(hash(plm_name)) % 1000
+                result = phase4_plm_adapter(
+                    plm_name, plm_info, args.device, n_epochs=80, rl_seed=rl_seed
+                )
                 plm_results.append(result)
             except Exception as e:
                 print(f"  ERROR {plm_name}: {e}")
