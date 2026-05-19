@@ -146,8 +146,16 @@ from scripts.train_distill_adapter import (
 # Phase A — student-policy sampling distribution q_φ
 # ═══════════════════════════════════════════════════════════════════════════
 
-def bernoulli_entropy(p: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
-    """Scalar Bernoulli entropy H(p) = -p·log p - (1-p)·log(1-p)."""
+def bernoulli_entropy(p: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """Scalar Bernoulli entropy H(p) = -p·log p - (1-p)·log(1-p).
+
+    **eps default 1e-6 (not 1e-8)**: in float32, ``1.0 - 1e-8`` rounds to
+    exactly ``1.0`` due to mantissa precision (~7 decimal digits), causing
+    the upper clamp bound to become 1.0 and yielding ``log(0) = -inf`` →
+    NaN for saturated sigmoids (observed on Amazon-BWGNN where base_logit
+    max ~ 37.85 saturates σ to exactly 1.0).  1e-6 survives fp32:
+    ``1.0 - 1e-6 = 0.999999`` exactly representable.
+    """
     p = p.clamp(eps, 1.0 - eps)
     return -(p * p.log() + (1.0 - p) * (1.0 - p).log())
 
@@ -178,6 +186,15 @@ def build_student_policy(
         q_raw = eps_q + H_S + alpha_q * p_S + beta_q * delta_S.abs()
         if tau != 1.0:
             q_raw = q_raw ** (1.0 / max(float(tau), 1e-6))
+        # ── Defensive NaN/Inf sanitiser (T5 fp32-saturation guard) ───────
+        # If any entry of `q_raw` is NaN/Inf (e.g. residual upstream fp32
+        # saturation that slipped past bernoulli_entropy's eps=1e-6 clamp),
+        # replace with `eps_q` so the sampling distribution stays valid.
+        # Without this guard, `torch.multinomial` triggers a device-side
+        # assert "probability tensor contains either `inf`, `nan` or
+        # element < 0", as observed on Amazon-BWGNN seed_42 with
+        # base_logit max=37.85 (T5 fp32-saturation crash).
+        q_raw = torch.nan_to_num(q_raw, nan=eps_q, posinf=eps_q, neginf=eps_q).clamp_min(0.0)
         # Restrict to train nodes (student-policy is over training distribution).
         q = torch.zeros_like(q_raw)
         q[train_mask] = q_raw[train_mask]
@@ -189,17 +206,20 @@ def build_student_policy(
 # Phase D — scalar Bernoulli mixed KL (entropy-aware OPD)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def bern_kl_rev(p_S: torch.Tensor, p_T: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+def bern_kl_rev(p_S: torch.Tensor, p_T: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     """Reverse KL: KL(p_S || p_T) — mode-seeking, what student concentrates on.
 
         KL_rev = p_S · log(p_S / p_T) + (1 - p_S) · log((1 - p_S) / (1 - p_T))
+
+    **eps default 1e-6 (not 1e-8)** for fp32 numerical stability — see
+    ``bernoulli_entropy`` docstring for the saturation argument.
     """
     p_S = p_S.clamp(eps, 1.0 - eps)
     p_T = p_T.clamp(eps, 1.0 - eps)
     return p_S * (p_S.log() - p_T.log()) + (1.0 - p_S) * ((1.0 - p_S).log() - (1.0 - p_T).log())
 
 
-def bern_kl_fwd(p_S: torch.Tensor, p_T: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+def bern_kl_fwd(p_S: torch.Tensor, p_T: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
     """Forward KL: KL(p_T || p_S) — mass-covering, preserves recall on rare classes."""
     return bern_kl_rev(p_T, p_S, eps=eps)
 
