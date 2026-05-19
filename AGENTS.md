@@ -517,45 +517,79 @@ artifacts/results/yelpchi/{base}/idea2b_ablate_{switch}/seed_*/             (60 
 
 ---
 
-## 14. C3 — Flash-RAER: Contract-Preserving Multi-Head Reliability-Weighted Distillation (Idea 2C, **T5 5-seed evidence-backed** at v3.3)
+## 14. C3 — Flash-RAER + CBR: Contract-Budgeted Residual Distillation (Idea 2C, **v3.5 K1+K2 evidence-backed**)
 
-> **TKDE contribution #3**. Independent novelty axis: training-procedure level. First contract-preserving **multi-head reliability-weighted** distillation framework for RAER fraud-detection adapters: deterministic top-entropy node-mask + 3-head matching + entropy-aware mixed Bernoulli KL + adaptive BCE anchor. Locked claim: see `docs/THREE_CONTRIBUTIONS.md` § C3.
+> **TKDE contribution #3**. Independent novelty axis: training-procedure / loss-function level. Top-K student-entropy node masking + a novel Contract-Budgeted Residual (CBR) regularizer that uses the teacher's δ-bounded contract as a learning signal. Locked claim: see `docs/THREE_CONTRIBUTIONS.md` § C3.
 
-**Status**: design **v3.3** locked at `docs/OPD_FLASH_DESIGN_v3.md` (2026-05-19, Opus round-7 retreat — T5 pre-registered §7 falsification triggered for v3.2 stochastic-sampling main method `g_opd_flash`; Codex Option A retreat to Flash-RAER (`det_mask` main + multi-head + reliability) absorbed as designed). T5 evidence: `artifacts/tables/g_opd_flash_8cell_5seed.md` (240 runs, 6 modes, paired-$t$ supporting retreat). v1/v3/v3.1/v3.2 retained as historical record.
+**Status**: design **v3.5** locked (2026-05-19, Opus round-9 critic). Supersedes v3.3 multi-head retreat — Z1 4-ingredient ablation (160 runs) falsified 4 of 5 v3.3 ingredients;V2 brainstorm → W2 quick-screen → K1 full 8-cell × 5-seed benchmark (40 runs) + K2 mechanism analysis identify **CBR** as the empirically-supported novel C3 axis. v1/v3/v3.1/v3.2/v3.3 retained as historical record.
 
 ### One-sentence framing
 
-Flash-RAER is the **first contract-preserving multi-head reliability-weighted distillation framework** for RAER fraud-detection adapters (boundary against FreeKD KDD'22 graph RL-KD via contract-preservation, and against GLNN ICLR'22 / G-CRD CIKM'22 graph-free KD via the three-head matching and reliability-weighted loss — v3.3 round-7 retreat from "first contract-preserving student-policy node-state distillation" which was 5-seed paired-$t$ falsified on T5): the student adapter, trained under a **deterministic top-entropy node-mask** with frozen RAER/LREE teacher's **three-head matching** (final logit + per-relation contribution $c_r = g_r s_r$ + gate $g_r$), uses **entropy-aware mixed Bernoulli KL** $(1-\eta)\mathrm{KL}_{\mathrm{rev}} + \eta \mathrm{KL}_{\mathrm{fwd}}$ with **node-level reliability weight** and **adaptive BCE anchor** $\lambda_{\mathrm{bce}}(i) = \lambda_{\min} + (1 - r^{\mathrm{node}}_i)\lambda_{\mathrm{extra}}$ over a **two-term independent-normaliser loss** (v3.1 MF4). **T5 5-seed paired-$t$ evidence**: $\geq 95\,\%$ AUPRC capture on both partitions (YelpChi 97.2% / Amazon 96.8% corrected), $\geq 2.59\times$ inference speed-up, 3/8 cells stat-sig at $p<0.05$ and 2/8 at $p<0.01$ vs off_policy baseline, **0/8 cells where any stochastic-sampling alternative beats Flash-RAER** (transferable §13.2 finding), all 4 hard §1 contracts preserved.
+Flash-RAER + CBR is a **contract-preserving distillation procedure for safe RAER fraud-detection adapters** combining (i) deterministic top-K student-entropy node masking for hard-example focus, and (ii) a novel **Contract-Budgeted Residual (CBR) regularizer**
 
-### Three graph-specific contributions (vs full-graph off-policy KD and graph-free KD)
+$$
+\boxed{\;\mathcal{L}_{\mathrm{CBR}} = \lambda_{\mathrm{cbr}} \cdot \mathbb{E}_{i \in \mathcal{B}_K}\!\left[ \frac{|\Delta^S_i|}{\delta_{\max}} \cdot \left(1 - \frac{|\Delta^T_i|}{\delta_{\max}}\right) \right]\;}
+$$
 
-| # | Contribution | What is novel |
+— that uses the teacher's δ-bounded contract as a learning signal. The CBR weight $(1 - |\Delta^T_i|/\delta_{\max})$ penalizes the student's residual magnitude on **low-sensitivity** nodes (where the base detector is already correct, hence further intervention is wasted). Empirically operates as **anti-overcorrection regularization** (K2 analysis: waste ↓ 10–23% on YelpChi cells with differential shrinkage on low-sens nodes). **K1 evidence**: 8/8 cells directionally positive, 3/8 cells stat-sig p<0.05 + **2/8 cells stat-sig p<0.01** vs the canonical Flash-RAER `det_mask` baseline (5-seed paired-$t$); strongest cell YelpChi-GAT ($t=+4.48$, $p=0.0055$ ★★), consistent with the RAER weak-base narrative. Honest cross-dataset scoping: gains concentrate on YelpChi (3/4 cells sig); Amazon (4 cells, near-saturated teacher AUPRC 0.85–0.87) yields 0/4 sig (1/4 near-sig p=0.0508), reported openly.
+
+### Three load-bearing contributions of Flash-RAER + CBR
+
+| # | Contribution | Empirical evidence |
 |---|---|---|
-| 1 | **Entropy-aware mixed Bernoulli KL** (Phase D) | $\eta$-weighted reverse-/forward-KL blend protects against reverse-KL collapse on saturated bases; consistent with `Entropy-Aware OPD arXiv 2603.07079`; T5 promoted to primary contribution from v3.2 §4.2 (was decorative under v3.1 `conf` factor; v3.2 MJ-4 dropped `conf`; T5 paired-$t$ evidence supports the activation) |
-| 2 | **Contract-preserving rollouts** (4 hard contracts) | All 4 §1 contracts (base-freeze SHA-256 / score-blind input / train-only proto / $\delta$-bounded residual) enforced **during every training epoch**; verified by runtime counterfactual hook (C2) + post-training SHA-256 assert (C1); T5 240/240 SHA-256 matches |
-| 3 | **Multi-head auxiliary internal-state matching** (3 heads) | Final logit + per-relation contribution + gate matching; enables downstream interpretability + drives the 8/8 directional lift over vanilla off-policy KD (T5: `all_node_mh` + `det_mask` + `g_opd_flash` all 8/8 dir+ over `off_policy`); promoted to primary contribution per T5 evidence |
+| 1 | **Deterministic top-K student-entropy masking** | Marginal lift over `all_node_mh` (full-graph multi-head): `det_mask` 0.6714 vs `all_node_mh` 0.6597 (8/8 dir+, 0/8 sig paired-$t$); +0.012 cross-cell mean. The masking IS load-bearing relative to no-masking baseline but only weakly sig directly |
+| 2 | **CBR regularizer** (novel — see §13.2 below) | K1 8-cell × 5-seed paired-$t$ vs `det_mask`: 8/8 dir+, **3/8 sig p<0.05 + 2/8 sig p<0.01** (YelpChi-GCN $t=+3.76$ p=0.0099 ★★, YelpChi-GAT $t=+4.48$ p=0.0055 ★★, YelpChi-SAGE $t=+2.42$ p=0.036 ★) |
+| 3 | **Contract-preserving rollouts** under 4 hard §1 contracts | All 240 + 40 + 30 = 310 runs SHA-256 unchanged; counterfactual hook C2 verified at every smoke test |
 
-**Pre-registered ablation arms (v3.2 stochastic-sampling alternatives, T5 5-seed FALSIFIED)** — kept as §6 ablation evidence + §13 risk register transferable finding:
-- `g_opd_flash` (GKD-style detached q_φ sampling) — 0/8 sig wins vs det_mask, 4/8 sig wins vs off_policy
-- `opd_action_strict` (single-step REINFORCE w/ batch-mean baseline) — 1/8 sig wins vs det_mask, 3/8 sig wins vs off_policy
-- `opd_action_strict_mh` (REINFORCE + MH + BCE w/ r_node-weighted policy gradient) — 0/8 sig wins vs det_mask, 2/8 sig wins vs off_policy ★ (MH HURTS REINFORCE — §13.3 finding)
+### Two transferable methodological findings (negative results, honestly disclosed)
 
-These are now documented as **transferable methodological findings** rather than failed contributions: on-policy sampling mechanisms designed for autoregressive distillation (GKD ICLR 2024, REINFORCE) do not transfer to single-step graph fraud detection.
-
-### Implementation status (T1–T7, 9–10 GPU days budget; actual: ~30 min for T5)
-
-| Task | Status | Owner |
+| # | Finding | Evidence base |
 |---|---|---|
-| T1 — teacher multi-head exposure (`return_heads=True` for logit / $c_r$ / gate) | ✅ DONE | landed in commit `5f5c90b` |
-| T2 — student multi-head adapter (rename `distill_adapter.py` → `flash_adapter.py`, add 2 zero-init heads) | ✅ DONE | landed |
-| T3 — Flash-RAER training loop with 6 `--mode` arms (`off_policy / all_node_mh / det_mask / g_opd_flash / opd_action_strict / opd_action_strict_mh`) | ✅ DONE | landed (det_mask = default Flash-RAER post-v3.3) |
-| T4 — curriculum prior + ECE calibration cache (`artifacts/teacher_curriculum_prior.json`, `..._calibration_bins.json`) | ✅ DONE | 40 cells × seeds, train-holdout (MJ-8) |
-| T5 — 8-cell × 5-seed full benchmark + paired-$t$ aggregation | ✅ DONE | 240/240 runs; `artifacts/tables/g_opd_flash_8cell_5seed.md` published |
-| T6 — `strict-OPD` ablation mode (Bernoulli sampling + REINFORCE) for reviewer defence | ✅ DONE | T5 evidence shows `opd_action_strict_mh` MH HURTS REINFORCE (§13.3) |
-| T7 — deployment-shift eval (train on `base_v1`, eval on `base_v2`) for exposure-bias evidence | OPTIONAL | NOT needed for retreat verdict; could supplement Flash-RAER deployment robustness story |
-| T8 — FreeKD / PEKD baseline reproduction | TODO (optional, +1–1.5 GPU days) | — |
+| (a) | **On-policy sampling does not transfer to single-step GFD** | T5 main + Z1: GKD-style detached q_φ sampling (`g_opd_flash`), single-step REINFORCE (`opd_action_strict`), REINFORCE+MH (`opd_action_strict_mh`) all **0/8 cells sig vs deterministic top-K**; sampling-gradient mechanism within ±0.0002 AUPRC between detached-GKD and REINFORCE |
+| (b) | **4 of 5 v3.3 "Flash-RAER" ingredients are empirically vacuous** | Z1 4-ingredient per-component ablation (160 runs): `det_mask_no_rel`, `det_mask_fixed_bce`, `det_mask_rev_only`, `det_mask_single_denom` all **0/8 sig vs `det_mask`** (reliability `det_mask_no_rel` even has 1/8 reverse-sig favoring NO reliability); multi-head `det_mask_mh` 0/8 sig vs `det_mask` (-0.005 AUPRC); only top-K masking is operationally load-bearing |
 
-See `docs/OPD_FLASH_DESIGN_v3.md` for full algorithm (Phase A-F pseudocode), hyperparameter defaults, 3 propositions with proof sketches, 8-arm experiment matrix, §13 risk register honest findings, reading list, and TKDE §5 cheat-sheet.
+### Novelty boundary (against TKDE-reviewer attacks)
+
+| Closest prior work | Distinction |
+|---|---|
+| AdaLoRA (ICLR'23) — adaptive parameter budget for adapters | CBR is **OUTPUT residual budget**, not parameter budget |
+| OA-Adapter (May'25) — adaptive bottleneck dim allocation in continual LLM | CBR is per-node residual allocation under a hard δ-bounded contract |
+| DKD (CVPR'22) — decoupled target/non-target KD | CBR has no decoupling — single residual penalty weighted by teacher's intervention magnitude |
+| UD-KD / IF-KD / sample-weighted KD | These weight by teacher's *output confidence* (probability margin). CBR weights by teacher's *intervention magnitude* $|\Delta^T|/\delta_{\max}$ — the two are **uncorrelated** when base is wrong but teacher only marginally corrects |
+| FreeKD (KDD'22) — RL-based graph KD | Different scope — full-model RL distillation, not lightweight residual adapter under contracts |
+| GLNN (ICLR'22) / G-CRD (CIKM'22) — graph-free KD | Different scope — graph-free MLP students,not contract-preserving adapter regularization |
+
+### Mechanism honesty (K2 analysis)
+
+CBR was **hypothesized** as "reallocation of budget from low-sens to high-sens nodes" (additive reallocation). **K2 empirical analysis** reveals the actual mechanism is differential shrinkage:
+
+| Cell | Teacher sens median | det_mask waste | CBR waste | Waste ↓ | Useful Δ |
+|---|---:|---:|---:|---:|---:|
+| YelpChi-BWGNN | 0.90 | 0.107 | 0.083 | −22.6% | −0.0% |
+| YelpChi-SAGE | 0.93 | 0.087 | 0.078 | −9.9% | −2.7% |
+| YelpChi-GCN | 0.98 | 0.046 | 0.037 | −19.1% | −13.2% |
+| YelpChi-GAT | 0.98 | 0.039 | 0.031 | −22.5% | −14.2% |
+
+CBR penalty has **no positive reward** on high-sens nodes — only penalty on low-sens. Net effect is *shrinkage* of overall $|\Delta^S|$ (5–15%), with the bulk concentrated on low-sens nodes (waste ↓ 10–23% vs useful ↓ 0–14%). **We report this honestly**: hypothesized as reallocation, empirically observed as anti-overcorrection. The mechanism still qualifies as novel since no prior work uses the δ-bounded contract as a learning signal in this way. Figure: `artifacts/figures/cbr_sensitivity/yelpchi_sensitivity_distributions.png`.
+
+### Implementation status
+
+| Task | Status |
+|---|---|
+| T1 — teacher 3-head exposure (`return_heads=True`) | ✅ DONE (commit `5f5c90b`) |
+| T2 — student multi-head adapter `flash_adapter.py` | ✅ DONE |
+| T3 — Flash-RAER training loop (11 `--mode` arms including CBR) | ✅ DONE |
+| T4 — curriculum prior + ECE calibration cache | ✅ DONE (no longer load-bearing per Z1; kept for legacy modes) |
+| T5 — full 8-cell × 5-seed × 6-mode benchmark (240 runs) | ✅ DONE |
+| Z1 — 4-ingredient per-component ablation (160 runs) | ✅ DONE — falsified 4/5 v3.3 ingredients |
+| V2 — 7-direction brainstorm + novelty check | ✅ DONE |
+| W2 — CRD vs CBR quick-screen + 5-seed YelpChi (20 runs) | ✅ DONE — CRD FAIL, CBR PASS |
+| K1 — CBR full 8-cell × 5-seed benchmark (40 runs) | ✅ DONE — 3/8 sig p<.05 + 2/8 p<.01 vs det_mask |
+| K2 — sensitivity mechanism analysis (YelpChi 4 cells) | ✅ DONE — anti-overcorrection mechanism verified |
+| MF-3 (round-9): K2 script + Amazon mechanism | TODO |
+| MF-4 (round-9): λ_cbr sensitivity sweep (3 values × 3 cells × 5 seeds = 45 runs) | RUNNING (background `bfdpda1eu`) |
+
+See `docs/OPD_FLASH_DESIGN_v3.md` for full algorithm, Z1 ablation table, mechanism analysis, and TKDE §5 cheat-sheet.
 
 ---
 
@@ -583,7 +617,7 @@ The TKDE 2026 submission is built on **three independent contributions**, each w
 |---|---|---|---|---|
 | **C1** | **RAER** — contract-enforced relation-aware evidence reasoning (canonical CoVER-REL) | framework-level | base-frozen, score-blind, $\delta$-bounded residual + 4 architectural contracts + first cell-resolved **base-strength × evidence-type interaction law (Law 1)** | §1-12 of this AGENTS.md; 8/8 directional positive, 6/8 5-seed paired-$t$ sig |
 | **C2** | **LREE** — learnable relational evidence extractor | representation-level | learned per-relation GCN+MLP encoder (~14 k params) under identical C1–C4 contracts; reveals **encoder-absorbs-prototype law (Law 3)** | §13 of this AGENTS.md; 19/32 stat-sig wins on cross-cell paired-$t$; +0.10–0.23 AUPRC ★★★ on weak bases |
-| **C3** | **Flash-RAER** — contract-preserving multi-head reliability-weighted distillation (det_mask main method) | training-procedure level | **first contract-preserving multi-head reliability-weighted distillation framework** for RAER fraud-detection adapters (boundary: distinct from FreeKD KDD'22 graph RL-KD via contract-preservation; distinct from GLNN ICLR'22 / G-CRD CIKM'22 graph-free KD via 3-head matching + reliability — v3.3 round-7 retreat); deterministic top-entropy mask; entropy-aware mixed Bernoulli KL; 3-head internal-state matching; **contract-preserving rollouts** under 4 hard §1 contracts; two-term independent-normaliser loss; teacher-agnostic recipe (hand-crafted CoVER-REL or LREE); transferable finding (§13.2): on-policy sampling mechanisms (GKD / REINFORCE) **do NOT transfer** to single-step GFD (0/8 sig wins vs det_mask in 5-seed paired-$t$) | §14 of this AGENTS.md + `docs/OPD_FLASH_DESIGN_v3.md` (v3.3); **T5 evidence**: YelpChi 97.2% / Amazon 96.8% mean AUPRC capture vs LREE teacher; 3/8 cells stat-sig at p<0.05 + 2/8 at p<0.01 vs off_policy; 240/240 runs SHA-256 contracts preserved; `artifacts/tables/g_opd_flash_8cell_5seed.md` |
+| **C3** | **Flash-RAER + CBR** — top-K student-entropy masking + Contract-Budgeted Residual regularizer (v3.5 lock) | training-procedure / loss-function level | top-K H(p_S) deterministic node masking + novel **CBR penalty** $\lambda \cdot \mathbb{E}_i[|\Delta^S|/\delta_{\max} \cdot (1 - |\Delta^T|/\delta_{\max})]$ that uses the teacher's δ-bounded contract as a learning signal (penalizes wasted student residual on low-sensitivity nodes); operates as anti-overcorrection regularization (K2: waste ↓ 10–23% on YelpChi); contract-preserving (4 hard §1); recipe-agnostic over RAER teachers; **transferable findings (a)** on-policy sampling does NOT transfer to single-step GFD (T5: 0/8 sig vs det_mask), **(b)** 4/5 v3.3 ingredients vacuous (Z1: 0/8 sig vs det_mask each) | §14 of this AGENTS.md + `docs/OPD_FLASH_DESIGN_v3.md` (v3.5); **K1 evidence**: 8/8 dir+ + 3/8 sig p<0.05 + **2/8 sig p<0.01** vs Flash-RAER `det_mask` baseline; strongest YelpChi-GAT $t=+4.48$ p=0.0055 ★★; honest scoping: YelpChi 3/4 sig, Amazon 0/4 sig (1/4 near-sig p=0.0508); 310/310 SHA-256 contracts preserved; `artifacts/tables/g_opd_flash_8cell_5seed.md` + `artifacts/figures/cbr_sensitivity/yelpchi_sensitivity_distributions.png` |
 
 ### Independence guarantee
 
