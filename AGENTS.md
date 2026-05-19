@@ -420,7 +420,9 @@ scripts/pre_cache_base_outputs.py                (one-time base forward cache; r
 
 ---
 
-## 13. Idea-2B: Learned Evidence Extractor (8 cells × 5 seeds = 40 runs, paired-t vs Idea-1 canonical)
+## 13. C2 — LREE: Learnable Relational Evidence Extractor (8 cells × 5 seeds = 40 runs, paired-t vs Idea-1 canonical)
+
+> **TKDE contribution #2**. Independent novelty axis: representation-level. Supersedes the hand-crafted 9-dim $\phi_r$ under the *identical* C1–C4 contracts. Locked claim: see `docs/THREE_CONTRIBUTIONS.md` § C2.
 
 ### Motivation
 
@@ -515,7 +517,9 @@ artifacts/results/yelpchi/{base}/idea2b_ablate_{switch}/seed_*/             (60 
 
 ---
 
-## 14. OPD-Flash: On-Policy Distillation for Lightweight RAER Adapters (Idea 2C, in design)
+## 14. C3 — OPD-Flash: On-Policy Distillation for Lightweight RAER Adapters (Idea 2C, in design)
+
+> **TKDE contribution #3**. Independent novelty axis: training-procedure level. First on-policy distillation framework for graph anomaly detection. Locked claim: see `docs/THREE_CONTRIBUTIONS.md` § C3.
 
 **Status**: design locked at `docs/OPD_FLASH_DESIGN.md` (v1, 2026-05-19). Implementation in progress.
 
@@ -562,6 +566,42 @@ These fixes live in the archive copy (post-fix versions) and are also reflected 
 
 ---
 
+## 16. Three independent contributions (TKDE 2026 lock)
+
+The TKDE 2026 submission is built on **three independent contributions**, each with its own novelty axis, evaluation lane, and failure mode. Full lock-down + claim sentences live at `docs/THREE_CONTRIBUTIONS.md`.
+
+| # | Name | Novelty axis | What is new | Key evidence |
+|---|---|---|---|---|
+| **C1** | **RAER** — contract-enforced relation-aware evidence reasoning (canonical CoVER-REL) | framework-level | base-frozen, score-blind, $\delta$-bounded residual + 4 architectural contracts + first cell-resolved **base-strength × evidence-type interaction law (Law 1)** | §1-12 of this AGENTS.md; 8/8 directional positive, 6/8 5-seed paired-$t$ sig |
+| **C2** | **LREE** — learnable relational evidence extractor | representation-level | learned per-relation GCN+MLP encoder (~14 k params) under identical C1–C4 contracts; reveals **encoder-absorbs-prototype law (Law 3)** | §13 of this AGENTS.md; 19/32 stat-sig wins on cross-cell paired-$t$; +0.10–0.23 AUPRC ★★★ on weak bases |
+| **C3** | **OPD-Flash** — on-policy distillation for graph anomaly detection | training-procedure level | first OPD instance in graph anomaly detection; multi-head dense supervision (logit + per-rel Δ + gate + proto) + cell-aware teacher-reliability gate + **contract-preserving rollouts** | §14 of this AGENTS.md + `docs/OPD_FLASH_DESIGN.md`; target ≥ 95 % AUPRC capture, ≥ 2.59 × speed-up |
+
+### Independence guarantee
+
+No single reviewer attack collapses all three contributions:
+- Reject C1's "paradigm" framing → C2 (LREE) and C3 (OPD-Flash) still stand on their own.
+- Reject C2 because pooled summary shows 0/32 sig wins → C1 stands on Law 1; C3 stands on OPD novelty; C2 falls back to "strict prerequisite for C3's multi-head supervision."
+- Reject C3 as "OPD-LLM ported to GNN" → C1 + C2 still stand; C3 narrows to "multi-head dense distillation with contract preservation."
+
+### Ablation matrix earmark (for paper §6)
+
+| Config | C1 | C2 | C3 | Expected AUPRC (YelpChi-BWGNN) |
+|---|:---:|:---:|:---:|---:|
+| Base only | — | — | — | 0.503 |
+| C1 only (hand-crafted RAER) | ✓ | — | — | 0.609 |
+| C1 + C2 (LREE backbone) | ✓ | ✓ | — | ~ 0.640 (per Idea 2B) |
+| C1 + C3 (OPD-Flash over hand-crafted teacher) | ✓ | — | ✓ | ~ 0.580 (per Idea 2C distill capture) |
+| **C1 + C2 + C3 (full)** | ✓ | ✓ | ✓ | **target ≥ 0.620 at 0.26 × params, 2.59 × speed-up** |
+
+### Source-of-truth map
+
+- C1 → §1–§12 of this file + `docs/TKDE_2026_SUBMISSION_PLAN.md`
+- C2 → §13 of this file
+- C3 → §14 of this file + `docs/OPD_FLASH_DESIGN.md` (v1 locked)
+- Cross-cutting paper plan → `docs/THREE_CONTRIBUTIONS.md` (authoritative claim sentences, independence audit, repo-artefact mapping)
+
+---
+
 ## Summary (TPAMI-grade narrative)
 
 ### One-sentence elevator pitch
@@ -588,3 +628,18 @@ For ARIS workflows, prefer the project-local skills under `.claude/skills/` over
 Do not modify or delete files inside any skill that is a symlink (symlinks point into `/data1/mq/codes/aris_repo`).
 Update with: `bash /data1/mq/codes/aris_repo/tools/install_aris.sh /data1/mq/codes/awesome-graph-anomaly-detection/cover-fd --aris-repo /data1/mq/codes/aris_repo`  (re-runnable; reconciles new/removed skills).
 <!-- ARIS:END -->
+<!-- ARIS-CODEX:BEGIN -->
+## ARIS Codex Skill Scope
+ARIS Codex packages installed in this project: skills-codex
+Managed entries: 69
+Manifest: `.aris/installed-skills-codex.txt`
+ARIS repo root: `/data1/mq/codes/aris_repo`
+Project skill path: `.agents/skills/<skill-name>`
+For ARIS Codex workflows, prefer the project-local skills under `.agents/skills/`.
+When a skill needs ARIS helper scripts, resolve the repo root from the manifest or set it explicitly:
+`ARIS_REPO=$(awk -F'\t' '$1=="repo_root"{print $2; exit}' "/data1/mq/codes/awesome-graph-anomaly-detection/cover-fd/.aris/installed-skills-codex.txt")`
+Do not edit or delete symlinked skills in place; update upstream or rerun:
+`bash /data1/mq/codes/aris_repo/tools/install_aris_codex.sh "/data1/mq/codes/awesome-graph-anomaly-detection/cover-fd" --reconcile`
+For copied Codex installs, use:
+`bash /data1/mq/codes/aris_repo/tools/smart_update_codex.sh --project "/data1/mq/codes/awesome-graph-anomaly-detection/cover-fd"`
+<!-- ARIS-CODEX:END -->
