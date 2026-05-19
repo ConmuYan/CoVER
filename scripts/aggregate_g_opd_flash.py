@@ -126,6 +126,19 @@ def aggregate(
     explicitly.  Cross-cell aggregation uses ``directional_positive`` and
     ``sig_cells (p<0.05)`` counts, NOT a pooled t-test — pooling cells
     treats them as IID and inflates apparent sample size.
+
+    **Critic round-7 fix (CRITICAL)**: ``teacher_auprc`` is now computed
+    as the cross-seed MEAN of teacher_auprc readings (was: single-seed
+    first-non-NaN value, which falsely reported amazon-gcn at 0.229
+    due to seed_42 LREE teacher collapse instead of the true mean
+    ~0.7006).  This fixes the ``capture_pct`` column on every cell with
+    non-trivial teacher variance.
+
+    **Critic round-7 add (P0 #1)**: a second per-cell paired-t column
+    ``p_vs_det_mask`` is reported for every non-det_mask mode, pairing
+    by ``(seed)`` tuple against the v1 deterministic baseline.  This
+    directly answers §8 ablation arm 3 "stochastic > deterministic?"
+    — the question that T5 was pre-registered to settle.
     """
     rows: list[dict[str, Any]] = []
     # cross-cell directional / sig tracker (idea2b-style report)
@@ -134,54 +147,62 @@ def aggregate(
     for ds in DATASETS:
         for base in BASES:
             base_runs = cells.get((ds, base, baseline_mode), {})
+            det_mask_runs = cells.get((ds, base, "det_mask"), {})
 
-            # Discover the union of teacher/base AUPRCs from any run with a diag
-            teacher_auprcs: list[float] = []
-            base_only_auprcs: list[float] = []
+            # ── Critic round-7 CRITICAL fix: cross-seed mean teacher AUPRC
+            # Pool ALL teacher_auprc readings across ALL modes × seeds for this
+            # cell, take the mean.  Single-seed teacher collapses (e.g.
+            # amazon-gcn seed_42 LREE → 0.229) no longer poison the
+            # capture_pct column.
+            all_teacher_readings: list[float] = []
+            all_base_only_readings: list[float] = []
             for mode in MODES:
                 for s in SEEDS:
                     m = cells.get((ds, base, mode), {}).get(s)
-                    if m and not math.isnan(m.get("teacher_auprc", float("nan"))):
-                        teacher_auprcs.append(m["teacher_auprc"])
-                        break
-                if teacher_auprcs:
-                    break
-            for mode in MODES:
-                for s in SEEDS:
-                    m = cells.get((ds, base, mode), {}).get(s)
-                    if m and not math.isnan(m.get("base_auprc", float("nan"))):
-                        base_only_auprcs.append(m["base_auprc"])
-                        break
-                if base_only_auprcs:
-                    break
-            teacher_auprc = float(np.mean(teacher_auprcs)) if teacher_auprcs else float("nan")
-            base_only_auprc = float(np.mean(base_only_auprcs)) if base_only_auprcs else float("nan")
+                    if not m:
+                        continue
+                    t_auprc = m.get("teacher_auprc", float("nan"))
+                    if not math.isnan(t_auprc):
+                        all_teacher_readings.append(t_auprc)
+                    b_auprc = m.get("base_auprc", float("nan"))
+                    if not math.isnan(b_auprc):
+                        all_base_only_readings.append(b_auprc)
+            teacher_auprc = (
+                float(np.mean(all_teacher_readings))
+                if all_teacher_readings else float("nan")
+            )
+            base_only_auprc = (
+                float(np.mean(all_base_only_readings))
+                if all_base_only_readings else float("nan")
+            )
 
             for mode in MODES:
                 runs = cells.get((ds, base, mode), {})
                 if not runs:
                     rows.append({
                         "dataset": ds, "base": base, "mode": mode,
-                        "n_seeds": 0,
+                        "n_seeds": 0, "n_paired_vs_baseline": 0,
                         "auprc_mean": float("nan"), "auprc_std": float("nan"),
                         "capture_pct": float("nan"),
                         "t_vs_baseline": float("nan"), "p_vs_baseline": float("nan"),
                         "sig_vs_baseline": "",
+                        "t_vs_det_mask": float("nan"), "p_vs_det_mask": float("nan"),
+                        "sig_vs_det_mask": "",
                         "teacher_auprc": teacher_auprc,
                         "base_only_auprc": base_only_auprc,
                     })
                     continue
 
                 # ── Tuple-key paired sample construction ────────────────────
-                # Only pair AUPRCs for seeds present in BOTH `mode` and
-                # `baseline_mode`.  This makes the paired-t well-defined
-                # even when a seed is missing for one of the two modes.
                 paired_seeds = [s for s in SEEDS if s in runs and s in base_runs]
                 auprcs_mode = [runs[s]["auprc"] for s in paired_seeds]
                 auprcs_base = [base_runs[s]["auprc"] for s in paired_seeds]
-                # For mean/std, use ALL seeds present for this mode (even if
-                # baseline is missing) — gives the most honest mean.
                 all_auprcs_mode = [runs[s]["auprc"] for s in SEEDS if s in runs]
+
+                # ── Critic round-7 P0 #1: g_opd_flash vs det_mask direct paired-t
+                paired_seeds_dm = [s for s in SEEDS if s in runs and s in det_mask_runs]
+                auprcs_mode_dm = [runs[s]["auprc"] for s in paired_seeds_dm]
+                auprcs_det_mask = [det_mask_runs[s]["auprc"] for s in paired_seeds_dm]
 
                 row = {
                     "dataset": ds, "base": base, "mode": mode,
@@ -197,6 +218,7 @@ def aggregate(
                     "teacher_auprc": teacher_auprc,
                     "base_only_auprc": base_only_auprc,
                 }
+                # vs baseline (off_policy) paired-t
                 if mode != baseline_mode and len(paired_seeds) >= 2:
                     t, p = _paired_t_one_sided(auprcs_mode, auprcs_base)
                     row["t_vs_baseline"] = t
@@ -206,6 +228,16 @@ def aggregate(
                     row["t_vs_baseline"] = float("nan")
                     row["p_vs_baseline"] = float("nan")
                     row["sig_vs_baseline"] = ""
+                # vs det_mask direct paired-t (Critic round-7 P0 #1)
+                if mode != "det_mask" and len(paired_seeds_dm) >= 2:
+                    t_dm, p_dm = _paired_t_one_sided(auprcs_mode_dm, auprcs_det_mask)
+                    row["t_vs_det_mask"] = t_dm
+                    row["p_vs_det_mask"] = p_dm
+                    row["sig_vs_det_mask"] = _star(p_dm)
+                else:
+                    row["t_vs_det_mask"] = float("nan")
+                    row["p_vs_det_mask"] = float("nan")
+                    row["sig_vs_det_mask"] = ""
                 rows.append(row)
 
                 # cross-cell counter (per mode, NOT per cell)
@@ -215,6 +247,8 @@ def aggregate(
                     "sig_cells_p05": 0,
                     "sig_cells_p01": 0,
                     "n_total_runs": 0,
+                    "vs_det_mask_directional_positive": 0,
+                    "vs_det_mask_sig_p05": 0,
                 })
                 ctr["cells_evaluated"] += 1
                 ctr["n_total_runs"] += len(all_auprcs_mode)
@@ -226,6 +260,12 @@ def aggregate(
                         ctr["sig_cells_p05"] += 1
                     if np.isfinite(row["p_vs_baseline"]) and row["p_vs_baseline"] < 0.01:
                         ctr["sig_cells_p01"] += 1
+                if mode != "det_mask" and len(paired_seeds_dm) >= 2:
+                    delta_dm = float(np.mean(auprcs_mode_dm)) - float(np.mean(auprcs_det_mask))
+                    if delta_dm > 0:
+                        ctr["vs_det_mask_directional_positive"] += 1
+                    if np.isfinite(row["p_vs_det_mask"]) and row["p_vs_det_mask"] < 0.05:
+                        ctr["vs_det_mask_sig_p05"] += 1
 
     # ── Cross-cell summary (NO pooled paired-t — Critic round-4 fix) ──────
     overall_summary: dict[str, Any] = {
@@ -235,12 +275,14 @@ def aggregate(
             "Per-cell paired-t (5-seed, one-sided H1: mode > baseline). "
             "Cross-cell aggregation reports directional / sig counts only; "
             "pooled paired-t across cells is NOT reported because cells are "
-            "not IID (Critic round-4 fix)."
+            "not IID (Critic round-4 fix). "
+            "teacher_auprc is cross-seed mean (Critic round-7 fix); "
+            "vs_det_mask paired-t reports direct dominance of v1 baseline "
+            "(Critic round-7 P0 #1, pre-registered §8 ablation arm 3)."
         ),
         "per_mode": {},
     }
     for mode, ctr in cross_cell_tracker.items():
-        # Compute per-mode mean AUPRC across all cells (unweighted).
         mode_means = [r["auprc_mean"] for r in rows
                       if r["mode"] == mode and np.isfinite(r["auprc_mean"])]
         overall_summary["per_mode"][mode] = {
@@ -255,6 +297,8 @@ def aggregate(
             "directional_positive_cells": ctr["directional_positive"],
             "sig_cells_p05": ctr["sig_cells_p05"],
             "sig_cells_p01": ctr["sig_cells_p01"],
+            "vs_det_mask_directional_positive": ctr["vs_det_mask_directional_positive"],
+            "vs_det_mask_sig_p05": ctr["vs_det_mask_sig_p05"],
         }
 
     return rows, overall_summary
@@ -269,17 +313,22 @@ def render_markdown(rows: list[dict[str, Any]], summary: dict[str, Any]) -> str:
     # Per-cell table
     lines.append("## Per-cell results\n")
     lines.append(
-        "| Dataset | Base | Mode | n | Student AUPRC | Capture % | t vs baseline | p | sig | Teacher AUPRC |"
+        "| Dataset | Base | Mode | n | Student AUPRC | Capture % | t vs `off_policy` | p | sig | t vs `det_mask` | p | sig | Teacher AUPRC |"
     )
-    lines.append("|---|---|---|---:|---:|---:|---:|---:|---|---:|")
+    lines.append("|---|---|---|---:|---:|---:|---:|---:|---|---:|---:|---|---:|")
     for r in rows:
         auprc = f"{r['auprc_mean']:.4f}±{r['auprc_std']:.4f}" if np.isfinite(r["auprc_mean"]) else "n/a"
         cap = f"{r['capture_pct']:.1f}%" if np.isfinite(r["capture_pct"]) else "n/a"
         t = f"{r['t_vs_baseline']:+.2f}" if np.isfinite(r["t_vs_baseline"]) else ""
         p = f"{r['p_vs_baseline']:.4f}" if np.isfinite(r["p_vs_baseline"]) else ""
+        t_dm = f"{r['t_vs_det_mask']:+.2f}" if np.isfinite(r["t_vs_det_mask"]) else ""
+        p_dm = f"{r['p_vs_det_mask']:.4f}" if np.isfinite(r["p_vs_det_mask"]) else ""
         teacher = f"{r['teacher_auprc']:.4f}" if np.isfinite(r["teacher_auprc"]) else "n/a"
         lines.append(
-            f"| {r['dataset']} | {r['base']} | `{r['mode']}` | {r['n_seeds']} | {auprc} | {cap} | {t} | {p} | {r['sig_vs_baseline']} | {teacher} |"
+            f"| {r['dataset']} | {r['base']} | `{r['mode']}` | {r['n_seeds']} | {auprc} | {cap} "
+            f"| {t} | {p} | {r['sig_vs_baseline']} "
+            f"| {t_dm} | {p_dm} | {r['sig_vs_det_mask']} "
+            f"| {teacher} |"
         )
 
     lines.append("")
@@ -287,22 +336,27 @@ def render_markdown(rows: list[dict[str, Any]], summary: dict[str, Any]) -> str:
     lines.append(
         "**Statistical convention**: per-cell paired-t only (5-seed, one-sided "
         "H1: mode > baseline).  Cells are NOT pooled — pooling treats cells as "
-        "IID and inflates apparent sample size (Critic round-4 fix).\n"
+        "IID and inflates apparent sample size (Critic round-4 fix).  "
+        "Teacher AUPRC is cross-seed mean (Critic round-7 CRITICAL fix — was "
+        "single-seed first-non-NaN value, falsely showing amazon-gcn 0.229).\n"
     )
     lines.append(
-        "| Mode | Cells | Mean AUPRC across cells | Directional + cells | Sig cells (p<0.05) | Sig cells (p<0.01) |"
+        "| Mode | Cells | Mean AUPRC across cells | Directional + vs off_policy | Sig vs off_policy (p<0.05) | Sig vs off_policy (p<0.01) | Directional + vs **det_mask** | Sig vs **det_mask** (p<0.05) |"
     )
-    lines.append("|---|---:|---:|---:|---:|---:|")
+    lines.append("|---|---:|---:|---:|---:|---:|---:|---:|")
     for mode, s in summary["per_mode"].items():
         auprc = (
             f"{s['auprc_mean_across_cells']:.4f}±{s['auprc_std_across_cells']:.4f}"
             if np.isfinite(s["auprc_mean_across_cells"]) else "n/a"
         )
-        dir_total = s["cells_evaluated"] if mode != summary["baseline_mode"] else s["cells_evaluated"]
+        n_cells = s["cells_evaluated"]
         lines.append(
-            f"| `{mode}` | {s['cells_evaluated']} | {auprc} | "
-            f"{s['directional_positive_cells']}/{dir_total} | "
-            f"{s['sig_cells_p05']}/{dir_total} | {s['sig_cells_p01']}/{dir_total} |"
+            f"| `{mode}` | {n_cells} | {auprc} | "
+            f"{s['directional_positive_cells']}/{n_cells} | "
+            f"{s['sig_cells_p05']}/{n_cells} | "
+            f"{s['sig_cells_p01']}/{n_cells} | "
+            f"{s['vs_det_mask_directional_positive']}/{n_cells} | "
+            f"{s['vs_det_mask_sig_p05']}/{n_cells} |"
         )
 
     return "\n".join(lines) + "\n"

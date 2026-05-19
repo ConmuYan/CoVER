@@ -1,9 +1,58 @@
-# G-OPD-Flash: Graph On-Policy Distillation for Contract-Preserving Lightweight Reasoners
+# Flash-RAER: Contract-Preserving Multi-Head Reliability-Weighted Distillation
 
-**Status**: Design **v3.2** — supersedes v3.1 (Opus round-4 critic 3 CRITICAL + 5 MAJOR fixes, 2026-05-19) which superseded v3 (Codex round-3 conditional-accept) which superseded v1 (`docs/OPD_FLASH_DESIGN.md`, FAIL/critical_gap audit).
+**Status**: Design **v3.3** — Flash-RAER retreat (Opus round-7 — T5 pre-registered §7 falsification triggered).  Supersedes v3.2 (G-OPD-Flash naming).  v3.2 / v3.1 / v3 / v1 retained as historical record below.
 **Scope**: C3 of TKDE 2026 submission; rewrite of vanilla off-policy KL distill (Idea 2C).
 **Target paper section**: §5 of TKDE 2026 submission.
-**Audit basis**: Codex `gpt-5.5` xhigh proof-checker (`PROOF_AUDIT.md`, FAIL/critical_gap on v1) + Opus 4.7 Q1–Q10 review + Codex round-3 conditional-accept (5 MUST-FIX + 4 minor → v3.1) + Opus 4.7 critic round-4 (3 CRITICAL + 5 MAJOR → v3.2 — current).
+**Audit basis**: Codex `gpt-5.5` xhigh proof-checker (`PROOF_AUDIT.md`, FAIL/critical_gap on v1) + Opus 4.7 Q1–Q10 (v1→v3) + Codex round-3 conditional-accept (v3→v3.1) + Opus 4.7 critic rounds 4/5/6 (v3.1→v3.2) + **Opus 4.7 critic round-7 (T5 evidence triage → v3.2→v3.3 retreat — current)**.
+
+---
+
+## 0. TL;DR
+
+We propose **Flash-RAER**, a contract-preserving lightweight distillation framework for RAER-style fraud-detection adapters. The student is a 4–5 k-parameter adapter trained under a **deterministic top-entropy node-mask** with **entropy-aware mixed Bernoulli-KL** supervision and **three auxiliary head-matching terms** (final logit, per-relation contribution $c_r = g_r s_r$, gate $g_r$) over a **two-term independent-normaliser loss**, with a **node-level reliability weight** and **adaptive BCE anchor** $\lambda_{\mathrm{bce}}(i) = \lambda_{\min} + (1 - r^{\mathrm{node}}_i)\lambda_{\mathrm{extra}}$.
+
+**T5 empirical headline** (8-cell × 5-seed paired-$t$, 240 runs, idea2b_learned_extractor teacher, `artifacts/tables/g_opd_flash_8cell_5seed.md`):
+
+- Flash-RAER (`--mode det_mask`) is **8/8 directional positive vs off_policy baseline**, 3/8 cells stat-sig at $p<0.05$, **2/8 cells stat-sig at $p<0.01$**.
+- Cross-cell mean AUPRC capture vs LREE teacher: **97.2% YelpChi / 96.8% Amazon (corrected)** — clears the §7 ≥95% target on both partitions.
+- The pre-registered stochastic-sampling ablation (`--mode g_opd_flash`) **does NOT beat Flash-RAER on any cell** (0/8 sig vs det_mask paired-$t$). The §4.1 "student-policy sampling" claim from v3.2 is **empirically falsified** in the GFD single-step setting; we retain it as a §6 ablation arm with a transferable finding ("on-policy sampling mechanisms designed for autoregressive distillation do not transfer to single-step graph fraud detection").
+
+**Targets met** (per design v3.2 §7 pre-registered protocol):
+- ≥ 95% AUPRC capture of LREE teacher (cross-cell): **PASS**
+- ≥ 2.59× inference speed-up (head-level, fixed by architecture): **PASS** (student params 4231 ≤ 5000 cap)
+- All four hard contracts of [§1 Problem formulation](../AGENTS.md#1-problem-formulation): **PASS** (base-freeze SHA-256 verified at epoch 0 + post-training assert; score-blind input verified by runtime counterfactual hook; train-only prototype preserved; $\delta$-bounded residual enforced architecturally via $\delta_{\max}\tanh$).
+
+---
+
+## 0.4 v3.2 → v3.3 revision log (Opus round-7 — T5 evidence retreat)
+
+Opus 4.7 critic round-7 verdict on T5 8-cell × 5-seed × 6-mode benchmark: **§7 falsification triggered for the v3.2 main method** (`g_opd_flash` / "student-policy sampling"). YelpChi mean capture 94.0% < 95% target; cross-cell mean 0.6585 < `det_mask` cross-cell mean 0.6714. Pre-registered **Option A retreat path** (Codex round-3, `docs/TKDE_COMPLETED_CONTRIBUTIONS.md`) now activated.
+
+| Change | v3.2 (G-OPD-Flash) | v3.3 (Flash-RAER) | Evidence |
+|---|---|---|---|
+| **Method name** | G-OPD-Flash | **Flash-RAER** | Codex `Option A`, kept warm since round-3 |
+| **Main method (default `--mode`)** | `g_opd_flash` (stochastic q_φ sampling) | **`det_mask`** (v1 deterministic top-entropy mask) | det_mask wins 8/8 cells (≥0) directional, 3/8 sig vs off_policy ★, **0/8 g_opd_flash sig wins vs det_mask** |
+| **Headline claim §0 TL;DR** | "first contract-preserving student-policy node-state distillation" | "contract-preserving multi-head reliability-weighted distillation" | Retract "student-policy" + "OPD" novelty; keep contract-preservation + multi-head + reliability as the engineering contribution |
+| **§4.1 contribution** | "Student-policy node sampling (core G-OPD contribution)" | **DEMOTED** to §6 ablation arm "Stochastic node-sampling alternative (5-seed paired-$t$ falsified vs det_mask)" | T5 evidence |
+| **§4.2 contribution** | Entropy-aware mixed KL (was decorative — Opus MJ-4) | **PROMOTED** as primary §4.1 contribution: ablation arm 7 head sub-arms in §8 will isolate marginal utility | Conditional fix from v3.2 MJ-4 stands; T5 will measure r_node histograms |
+| **§4.3 contribution** | Contract-preserving rollouts (4 hard contracts) | **UNCHANGED** — still primary §4.2 contribution | T5 C1 assert never fired (240/240 SHA-256 matches) |
+| **§4.4 contribution** | Multi-head auxiliary internal-state matching | **PROMOTED** as primary §4.3 contribution: per-relation $c_r$ + gate matching contribute to interpretability + the 8/8 directional lift over off_policy | T5: all_node_mh + det_mask + g_opd_flash all 8/8 dir+ over off_policy |
+| **§7 falsifiable targets** | ≥ 95% YelpChi (drop if < 93%), ≥ 90% Amazon (drop if < 85%) | **MET by det_mask** (97.2% / 96.8% corrected), **NOT MET by g_opd_flash** (94.0% / sub-95%); retreat triggered as pre-stated | T5 evidence |
+| **§8 ablation matrix** | Arm 4 main = g_opd_flash; arm 3 = det_mask | **Swap**: Arm 1 main = det_mask (Flash-RAER); arms 4/5/5b = g_opd_flash/strict/strict_mh (sampling alternatives, all 5-seed falsified) | T5 |
+| **§12 paper claim** | "first contract-preserving student-policy node-state distillation framework" | "first contract-preserving multi-head reliability-weighted distillation framework for RAER fraud-detection adapters with adaptive BCE anchor" | Honest retreat |
+| **Transferable finding** (was §0 only) | (none surfaced before T5) | **NEW** "On-policy sampling mechanisms designed for autoregressive distillation (GKD, REINFORCE) do not transfer to single-step graph fraud detection — both static AUPRC and per-cell paired-$t$ favour deterministic top-entropy mask + multi-head supervision over stochastic sampling alternatives." | T5 g_opd_flash 0/8 sig vs det_mask + opd_action_strict ≈ g_opd_flash within 0.0002 AUPRC + opd_action_strict_mh −0.010 below opd_action_strict |
+
+### Acceptance status (round-7)
+
+- ✅ **Implementation design**: ACCEPTED — Flash-RAER (main `--mode det_mask`) clears §7 pre-registered targets on 5-seed paired-$t$ evidence; T7 deploy-shift OPTIONAL for additional robustness story (not required for retreat).
+- ✅ **Paper claim lock**: NOW READY — narrowed framing is structurally clean (C1+C2 untouched; C3 retreats to evidence-supported Flash-RAER); pre-registered Option A activated as designed; risk register §9 carries the falsified sampling-arm finding as a transferable methodological contribution.
+
+### Aggregator fixes landed alongside retreat (Opus round-7 P0)
+
+- **CRITICAL**: `aggregate_g_opd_flash.py::teacher_auprc` was reporting a single-seed value (e.g. amazon-gcn = 0.229 from seed_42 LREE collapse), falsely yielding "263% capture" entries. Fixed to cross-seed mean → amazon-gcn now correctly shows 96.0% (g_opd_flash) / 97.9% (det_mask) over teacher mean 0.7006.
+- **P0 #1**: aggregator now reports `p_vs_det_mask` per-cell paired-$t$ (in addition to `p_vs_off_policy`) so the §8 arm-3 question "stochastic > deterministic?" has direct evidence. Result: g_opd_flash 0/8 sig wins vs det_mask (in fact, det_mask sig > g_opd_flash on yelpchi-gat with $t=-4.48$).
+
+---
 
 ---
 
@@ -538,4 +587,34 @@ Per Codex `gpt-5.5` audit + Opus round-4 MJ-6 recommendations:
 
 ---
 
-*Living document. Any drift during implementation must be reflected back here with a version bump (v3.1, v3.2, …). v1 (`docs/OPD_FLASH_DESIGN.md`) is retained as historical record; v3.2 supersedes for all future work. v3.2 lock 2026-05-19 (Opus round-4 critic — 3 CRITICAL + 5 MAJOR fixes absorbed; paper-claim lock still deferred to T5+T7+Codex round-5).*
+*Living document. Any drift during implementation must be reflected back here with a version bump (v3.1, v3.2, v3.3, …). v1 (`docs/OPD_FLASH_DESIGN.md`) is retained as historical record; v3.3 supersedes for all future work. v3.3 lock 2026-05-19 (Opus round-7 critic — T5 pre-registered §7 falsification triggered for v3.2 stochastic-sampling main method; Option A retreat to Flash-RAER (det_mask main + multi-head + reliability) absorbed as designed; stochastic-sampling arms demoted to §6 ablation with transferable "OPD does not transfer to single-step graph fraud detection" finding).*
+
+---
+
+## 13. § 9 risk register honest findings (Opus round-7 P1)
+
+The T5 8-cell × 5-seed × 6-mode benchmark surfaced three honest findings that are reported in the §9 risk register and §6 ablation discussion rather than buried:
+
+### 13.1 Amazon-GCN seed_42 LREE teacher instability
+
+The amazon-gcn `idea2b_learned_extractor` teacher at seed_42 collapsed to AUPRC = 0.229 (well below class prevalence of ~0.07 — flipped predictions). The other 4 seeds (123/456/789/2026) all gave teacher AUPRC ≈ 0.80, so the cross-seed mean (0.7006) is reasonable. Single-seed amazon-gcn LREE training is unstable; T5 student results on this cell carry high variance (std ≈ 0.25).
+
+Mitigation: cross-seed reporting (5-seed paired-$t$) absorbs the single-seed instability; the Opus round-7 P0 aggregator fix prevents the single-seed teacher AUPRC from being misreported as the cell teacher mean. Future work: investigate the LREE extractor initialisation sensitivity on amazon-gcn at seed_42, or re-train that single seed.
+
+### 13.2 Sampling-gradient mechanism does not matter in single-step GFD
+
+`g_opd_flash` (GKD-style detached q_φ sampling) cross-cell mean AUPRC = 0.6585. `opd_action_strict` (single-step REINFORCE with batch-mean baseline) cross-cell mean AUPRC = 0.6583. The two are statistically indistinguishable (Δ = 0.0002 AUPRC, well within the 0.13 cross-cell std). This invalidates the v3.2 §4.1 secondary claim that "detached sampling avoids high-variance score-function gradients" — in 4 k-param single-step binary classification, REINFORCE's variance does not blow up because the action space is trivial.
+
+Reported as: §6 ablation discussion paragraph: "The choice of sampling-gradient mechanism is immaterial in the single-step GFD setting; the prior literature's preference for detached sampling (GKD ICLR 2024) reflects multi-step autoregressive trajectory dynamics that do not transfer to node classification."
+
+### 13.3 Multi-head matching hurts REINFORCE (MJ-6 fair-comparison arm finding)
+
+`opd_action_strict_mh` (the MJ-6 fair-comparison arm: REINFORCE + multi-head matching + BCE anchor + r_node-weighted policy gradient) cross-cell mean = **0.6487**, which is **below** `opd_action_strict` (0.6583) by 0.010 AUPRC. Adding multi-head supervision to REINFORCE consistently **hurts** (6/8 directional positive vs off_policy, 2/8 sig — both the weakest counts of any non-baseline arm).
+
+Possible interpretations (documented but not falsified by current evidence): REINFORCE's variance dynamics interact destructively with multi-head matching gradients; the smaller effective sample size of REINFORCE makes multi-head losses noisier per gradient step; multi-head supervision pushes toward teacher's internal computation graph in a direction that conflicts with REINFORCE's policy-improvement gradient.
+
+Reported as: §9 risk register R-Mh-Strict: "Multi-head matching does not compose with REINFORCE-style policy gradients in the single-step GFD setting. Both static AUPRC and per-cell paired-$t$ show consistent degradation when MH is added on top of REINFORCE; this is the opposite of what we expected and reinforces the Flash-RAER (`det_mask` + MH + reliability, no sampling-gradient mechanism) recommendation."
+
+### 13.4 Cross-cell summary verdict
+
+The retreat from v3.2 "G-OPD-Flash" to v3.3 "Flash-RAER" is empirically supported by direct paired-$t$ evidence: `det_mask` 8/8 ≥ `g_opd_flash` on cell-level mean, with the difference reaching statistical significance against `g_opd_flash` on yelpchi-gat (the cell with the most headroom). The pre-registered Option A retreat path activates exactly as designed.

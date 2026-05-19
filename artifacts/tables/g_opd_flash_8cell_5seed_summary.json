@@ -9,7 +9,9 @@
       "directional_positive_cells": 8,
       "n_total_runs": 40,
       "sig_cells_p01": 0,
-      "sig_cells_p05": 3
+      "sig_cells_p05": 3,
+      "vs_det_mask_directional_positive": 3,
+      "vs_det_mask_sig_p05": 0
     },
     "det_mask": {
       "auprc_mean_across_cells": 0.671381566672933,
@@ -18,7 +20,9 @@
       "directional_positive_cells": 8,
       "n_total_runs": 40,
       "sig_cells_p01": 2,
-      "sig_cells_p05": 3
+      "sig_cells_p05": 3,
+      "vs_det_mask_directional_positive": 0,
+      "vs_det_mask_sig_p05": 0
     },
     "g_opd_flash": {
       "auprc_mean_across_cells": 0.6585034267830512,
@@ -27,7 +31,9 @@
       "directional_positive_cells": 8,
       "n_total_runs": 40,
       "sig_cells_p01": 1,
-      "sig_cells_p05": 4
+      "sig_cells_p05": 4,
+      "vs_det_mask_directional_positive": 2,
+      "vs_det_mask_sig_p05": 0
     },
     "off_policy": {
       "auprc_mean_across_cells": 0.6407358805965309,
@@ -36,7 +42,9 @@
       "directional_positive_cells": 0,
       "n_total_runs": 40,
       "sig_cells_p01": 0,
-      "sig_cells_p05": 0
+      "sig_cells_p05": 0,
+      "vs_det_mask_directional_positive": 0,
+      "vs_det_mask_sig_p05": 0
     },
     "opd_action_strict": {
       "auprc_mean_across_cells": 0.6583422050306591,
@@ -45,7 +53,9 @@
       "directional_positive_cells": 8,
       "n_total_runs": 40,
       "sig_cells_p01": 1,
-      "sig_cells_p05": 3
+      "sig_cells_p05": 3,
+      "vs_det_mask_directional_positive": 1,
+      "vs_det_mask_sig_p05": 0
     },
     "opd_action_strict_mh": {
       "auprc_mean_across_cells": 0.6487331346744907,
@@ -54,8 +64,10 @@
       "directional_positive_cells": 6,
       "n_total_runs": 40,
       "sig_cells_p01": 0,
-      "sig_cells_p05": 2
+      "sig_cells_p05": 2,
+      "vs_det_mask_directional_positive": 0,
+      "vs_det_mask_sig_p05": 0
     }
   },
-  "statistical_convention": "Per-cell paired-t (5-seed, one-sided H1: mode > baseline). Cross-cell aggregation reports directional / sig counts only; pooled paired-t across cells is NOT reported because cells are not IID (Critic round-4 fix)."
+  "statistical_convention": "Per-cell paired-t (5-seed, one-sided H1: mode > baseline). Cross-cell aggregation reports directional / sig counts only; pooled paired-t across cells is NOT reported because cells are not IID (Critic round-4 fix). teacher_auprc is cross-seed mean (Critic round-7 fix); vs_det_mask paired-t reports direct dominance of v1 baseline (Critic round-7 P0 #1, pre-registered \u00a78 ablation arm 3)."
 }
