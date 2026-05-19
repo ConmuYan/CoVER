@@ -1,0 +1,84 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{xcolor}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{hyperref}
+
+\definecolor{critical}{RGB}{190,30,30}
+\definecolor{major}{RGB}{180,100,20}
+\definecolor{safe}{RGB}{20,120,70}
+
+\title{Proof Audit Report: OPD-Flash and Three-Contribution Structure}
+\author{proof-checker}
+\date{2026-05-19}
+
+\begin{document}
+\maketitle
+
+\section*{Verdict}
+
+\textbf{\textcolor{critical}{FAIL}.} C1/C2 remain broadly defensible as
+empirical contributions. C3 is not defensible as an on-policy distillation
+contribution as currently written. The current algorithm is deterministic
+full-graph masked reverse-KL distillation, not a student-induced policy rollout
+objective.
+
+\section*{Issue Overview}
+
+\begin{longtable}{p{0.08\linewidth}p{0.14\linewidth}p{0.70\linewidth}}
+\textbf{ID} & \textbf{Severity} & \textbf{Issue} \\
+\hline
+I1 & FATAL & Deterministic entropy masking over a fixed graph is not OPD. \\
+I2 & CRITICAL & Scalar RAER binary logits are inconsistent with two-class softmax pseudocode. \\
+I3 & MAJOR & Reverse KL identity is closed-form algebra, not a REINFORCE estimator. \\
+I4 & CRITICAL & Masked losses are averaged over all nodes, changing objective scale with mask cardinality. \\
+I5 & FATAL & AUPRC capture bound is false under the stated assumptions. \\
+I6 & CRITICAL & C3 claims achieved capture/speed before implementation and 5-seed results. \\
+I7 & MAJOR & Cell reliability scalar cannot identify teacher errors. \\
+I8 & MAJOR & Raw AUPRC reliability normalization is inconsistent across cells/datasets. \\
+I9 & CRITICAL & C3 contract list does not match the four hard contracts in AGENTS.md. \\
+I10 & MAJOR & Score-blindness boundary is ambiguous during teacher-supervised training. \\
+I11 & MAJOR & Multi-head supervision is coupled internal-state matching, not independent labels. \\
+I12 & MAJOR & Prototype projection tensor is undefined in the canonical teacher. \\
+I13 & CRITICAL & C3 is not logically independent of C1/C2 as written. \\
+\end{longtable}
+
+\section*{Key Counterexample}
+
+For the AUPRC proposition, consider one positive and one negative node. The
+teacher scores the positive at $0.5001$ and the negative at $0.5000$, giving
+perfect ranking and AUPRC $1$. A student that scores the positive at $0.4999$
+and the negative at $0.5000$ is arbitrarily close in score space but reverses
+the ranking and can have AUPRC $0.5$. Thus bounded logits, bounded residuals,
+and mask cardinality do not imply an AUPRC capture lower bound.
+
+\section*{Before / After Logic}
+
+\textbf{\textcolor{critical}{Before.}} OPD-Flash is claimed as the first OPD
+framework for graph anomaly detection, with a REINFORCE-style gradient identity
+and an AUPRC capture proposition.
+
+\textbf{\textcolor{safe}{After required revision.}} Either implement a real
+student-induced policy objective, or rename the contribution to a
+student-adaptive masked multi-head distillation/compression method. The AUPRC
+claim should be empirical, or a conditional ranking-stability lemma with an
+explicit teacher margin assumption.
+
+\section*{Recommended Safe C3 Claim}
+
+We introduce Flash-RAER, a contract-preserving lightweight distillation
+procedure for RAER/LREE teachers. Flash-RAER trains a 4--5K parameter student
+adapter with entropy/disagreement-selected training nodes and auxiliary
+matching of teacher final logits, relation contributions, gates, and
+prototype-state projections, while preserving inference-time base-freeze,
+score-blind evidence inputs, train-only prototype construction, and bounded
+residual intervention.
+
+\section*{Acceptance Gate}
+
+The acceptance gate fails: open fatal and critical issues remain, and a concrete
+counterexample invalidates the stated AUPRC capture proposition. No target
+design files were edited by this audit.
+
+\end{document}

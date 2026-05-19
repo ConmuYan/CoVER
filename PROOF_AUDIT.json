@@ -1,0 +1,113 @@
+{
+  "audit_skill": "proof-checker",
+  "verdict": "FAIL",
+  "reason_code": "critical_gap",
+  "summary": "C1/C2 remain broadly defensible, but C3 is not a valid OPD contribution as written; the AUPRC capture bound is false under the stated assumptions.",
+  "audited_input_hashes": {
+    "docs/OPD_FLASH_DESIGN.md": "sha256:adfc4c5fbdcc55544243e13b366082a408b25db1dc907cbe6a61b222919380a3",
+    "docs/THREE_CONTRIBUTIONS.md": "sha256:cf2ead4798f8f336947fe778a3646a2f548c431671312c45c28346766d36ad07",
+    "AGENTS.md": "sha256:d63768958f2ec09b8bbd390f0719a3f8a9343bab813bf932235f0bf4c65bc298"
+  },
+  "trace_path": ".aris/traces/proof-checker/2026-05-19_run01/",
+  "thread_id": "019e3f90-4f79-7360-ba1a-5847c23aa55f",
+  "reviewer_model": "gpt-5.5",
+  "reviewer_reasoning": "xhigh",
+  "generated_at": "2026-05-19T09:31:42Z",
+  "details": {
+    "theorems_audited": 1,
+    "issues": [
+      {
+        "id": "I1",
+        "severity": "FATAL",
+        "category": "LOGICAL_GAP",
+        "location": "docs/OPD_FLASH_DESIGN.md:L11",
+        "note": "Deterministic full-graph entropy masking is not on-policy distillation."
+      },
+      {
+        "id": "I2",
+        "severity": "CRITICAL",
+        "category": "DIMENSION_TRACKING",
+        "location": "docs/OPD_FLASH_DESIGN.md:L55",
+        "note": "RAER emits scalar binary logits, while the pseudocode assumes two-class softmax logits."
+      },
+      {
+        "id": "I3",
+        "severity": "MAJOR",
+        "category": "UNJUSTIFIED_ASSERTION",
+        "location": "docs/OPD_FLASH_DESIGN.md:L197",
+        "note": "Reverse-KL identity is closed-form algebra, not evidence of OPD or REINFORCE sampling."
+      },
+      {
+        "id": "I4",
+        "severity": "CRITICAL",
+        "category": "NORMALIZATION_MISMATCH",
+        "location": "docs/OPD_FLASH_DESIGN.md:L110",
+        "note": "Masked losses are averaged over all nodes, so the objective scale changes with mask size."
+      },
+      {
+        "id": "I5",
+        "severity": "FATAL",
+        "category": "INSUFFICIENT_ASSUMPTION",
+        "location": "docs/OPD_FLASH_DESIGN.md:L205",
+        "note": "AUPRC capture lower bound is false without ranking-margin and optimization assumptions."
+      },
+      {
+        "id": "I6",
+        "severity": "CRITICAL",
+        "category": "SCOPE_OVERCLAIM",
+        "location": "docs/THREE_CONTRIBUTIONS.md:L31",
+        "note": "C3 says achieves >=95% capture and >=2.59x speed-up before implementation/results exist."
+      },
+      {
+        "id": "I7",
+        "severity": "MAJOR",
+        "category": "LOGICAL_GAP",
+        "location": "docs/OPD_FLASH_DESIGN.md:L173",
+        "note": "Cell-level scalar reliability weight does not identify or prevent teacher errors."
+      },
+      {
+        "id": "I8",
+        "severity": "MAJOR",
+        "category": "NORMALIZATION_MISMATCH",
+        "location": "docs/OPD_FLASH_DESIGN.md:L100",
+        "note": "Reliability denominator is inconsistent and raw AUPRC is not cross-dataset comparable."
+      },
+      {
+        "id": "I9",
+        "severity": "CRITICAL",
+        "category": "REFERENCE_MISMATCH",
+        "location": "docs/OPD_FLASH_DESIGN.md:L183",
+        "note": "The C3 contract list does not match the four hard contracts in AGENTS.md."
+      },
+      {
+        "id": "I10",
+        "severity": "MAJOR",
+        "category": "HIDDEN_ASSUMPTION",
+        "location": "docs/OPD_FLASH_DESIGN.md:L85",
+        "note": "Score-blindness boundary is ambiguous because teacher logits and predictions drive training."
+      },
+      {
+        "id": "I11",
+        "severity": "MAJOR",
+        "category": "UNJUSTIFIED_ASSERTION",
+        "location": "docs/OPD_FLASH_DESIGN.md:L161",
+        "note": "Multi-head supervision is auxiliary internal-state matching, not four independent signals."
+      },
+      {
+        "id": "I12",
+        "severity": "MAJOR",
+        "category": "DIMENSION_TRACKING",
+        "location": "docs/OPD_FLASH_DESIGN.md:L54",
+        "note": "proto_proj/rho is not defined by the canonical teacher outputs."
+      },
+      {
+        "id": "I13",
+        "severity": "CRITICAL",
+        "category": "SCOPE_OVERCLAIM",
+        "location": "docs/THREE_CONTRIBUTIONS.md:L21",
+        "note": "C3 is not logically independent of C1/C2 as written."
+      }
+    ]
+  }
+}
+

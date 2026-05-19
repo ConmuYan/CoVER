@@ -517,36 +517,47 @@ artifacts/results/yelpchi/{base}/idea2b_ablate_{switch}/seed_*/             (60 
 
 ---
 
-## 14. C3 — OPD-Flash: On-Policy Distillation for Lightweight RAER Adapters (Idea 2C, in design)
+## 14. C3 — G-OPD-Flash: Graph On-Policy Distillation for Contract-Preserving Lightweight Reasoners (Idea 2C, in design)
 
-> **TKDE contribution #3**. Independent novelty axis: training-procedure level. First on-policy distillation framework for graph anomaly detection. Locked claim: see `docs/THREE_CONTRIBUTIONS.md` § C3.
+> **TKDE contribution #3**. Independent novelty axis: training-procedure level. First **graph** on-policy distillation framework: policy over student-selected **node states** (not autoregressive token prefixes). Locked claim: see `docs/THREE_CONTRIBUTIONS.md` § C3.
 
-**Status**: design locked at `docs/OPD_FLASH_DESIGN.md` (v1, 2026-05-19). Implementation in progress.
+**Status**: design **v3** locked at `docs/OPD_FLASH_DESIGN_v3.md` (2026-05-19, supersedes v1 after Codex `gpt-5.5` xhigh `PROOF_AUDIT.md` FAIL/critical_gap + Opus 4.7 Q1–Q10 review). v1 (`docs/OPD_FLASH_DESIGN.md`) retained as historical record. Implementation in progress.
 
 ### One-sentence framing
 
-OPD-Flash is the first on-policy distillation framework for graph anomaly detection: a 4 k-parameter student adapter generates its *own* posterior on training nodes, and the frozen LREE-Reasoner teacher (Idea 2B) provides **multi-head dense supervision** — final logit, per-relation $\Delta_r$, softmax gate, prototype projection — restricted to entropy-aware informative nodes, with a cell-aware teacher-reliability gate. Target: ≥ 95 % AUPRC capture (vs current 85–93 %), ≥ 2.59 × inference speed-up, score-blind / bounded / zero-init contracts preserved during rollout sampling.
+G-OPD-Flash adapts the on-policy distillation principle from autoregressive trajectories to graph fraud detection by sampling **student-selected node states** from a stop-gradient student-induced distribution $q_\phi(i) \propto \varepsilon + H(p^S_i) + \alpha p^S_i + \beta |\delta^S_i|$ and querying a frozen RAER/LREE teacher only on those nodes; the loss is an **entropy-aware mixed Bernoulli KL** $(1-\eta)\mathrm{KL}_{\mathrm{rev}} + \eta \mathrm{KL}_{\mathrm{fwd}}$ over **three auxiliary heads** (final logit, per-relation contribution $c_r = g_r s_r$, gate $g_r$), with **node-level reliability weight** and **adaptive BCE anchor** $\lambda_{\mathrm{bce}}(i) = \lambda_{\min} + (1 - r^{\mathrm{node}}_i)\lambda_{\mathrm{extra}}$, sum-normalised by selected-node weight mass. **Targets** (5-seed paired-$t$ falsifiable, NOT proven): $\geq 95\,\%$ AUPRC capture of the teacher at $\geq 2.59\times$ inference speed-up, under the **four hard contracts** from §1 (base-freeze SHA-256, score-blind input, train-only prototype, $\delta$-bounded residual).
 
-### Three graph-specific contributions vs vanilla OPD-LLM
+### Three graph-specific contributions (vs LLM-OPD and vanilla off-policy KD)
 
-| # | Contribution | Why graph-specific |
+| # | Contribution | What is novel |
 |---|---|---|
-| 1 | Multi-head dense supervision (logit + $\Delta_r$ + gate + proto) | OPD-LLM only distills final-token distribution; RAER has 4 natural information sources |
-| 2 | Cell-aware teacher-reliability weight $w_c$ | Per-(dataset, base) reliability calibration (Uni-OPD does it per sequence) |
-| 3 | Contract-preserving rollouts | Score-blind / bounded / zero-init enforced during student sampling — no LLM-OPD analogue |
+| 1 | **Student-policy node sampling** (Phase A–B) | Policy is over node states, not token prefixes; training distribution depends on current $\pi_\phi^e$; teacher forward only on sampled $\mathcal{B}$ (GKD §3 detached-sampling convention adapted to graphs) |
+| 2 | **Entropy-aware mixed Bernoulli KL** (Phase D) | $\eta$-weighted reverse-/forward-KL blend protects against reverse-KL collapse on saturated bases; consistent with `Entropy-Aware OPD arXiv 2603.07079` |
+| 3 | **Contract-preserving rollouts** (4 hard contracts) | All 4 §1 contracts (base-freeze SHA-256 / score-blind input / train-only proto / $\delta$-bounded residual) enforced **during every sampling epoch**, not just at deployment; no LLM-OPD analogue |
+| (4) | **Multi-head auxiliary internal-state matching** (downgraded from v1's "4 independent signals" per Codex I11) | 3 heads (final logit / per-relation contribution / gate) enable downstream interpretability; head ablation in §6 isolates marginal utility; proto-head dropped pending canonical-teacher definition (Codex I12) |
 
-### Implementation status (subtasks T1–T6)
+### Three small provable propositions (replaces v1's false AUPRC capture bound — Codex CE-1)
+
+| # | Statement | Proof venue |
+|---|---|---|
+| P1 | **Unbiased sampled objective**: mini-batch loss is an unbiased estimator of population G-OPD risk under detached $q_\phi$ (matches GKD §3 Prop 1) | TKDE §5.1 |
+| P2 | **Ranking-stability lemma**: if teacher margin $\gamma_T > 0$ on $\mathcal{P}\times\mathcal{N}$ and student logit error $< \gamma_T/2$, ranking preserved; AUPRC drop bounded by low-margin pair mass | TKDE §5.2 |
+| P3 | **Contract preservation**: 4 hard contracts hold at every epoch; zero-init $\Rightarrow$ epoch-0 student posterior = base posterior (safe deployment from epoch 0) | TKDE §5.3 (static analysis pass) |
+
+### Implementation status (subtasks T1–T7, 9–10 GPU days)
 
 | Task | Status | Owner |
 |---|---|---|
-| T1 — teacher multi-head exposure | TODO | — |
-| T2 — student multi-head adapter | TODO | — |
-| T3 — OPD-Flash training loop | TODO | — |
-| T4 — cell-aware reliability cache | TODO | — |
-| T5 — 8-cell × 5-seed benchmark | TODO | — |
-| T6 — FreeKD / PEKD baseline reproduction | TODO (optional) | — |
+| T1 — teacher multi-head exposure (`return_heads=True` for logit / $c_r$ / gate) | TODO | — |
+| T2 — student multi-head adapter (rename `distill_adapter.py` → `flash_adapter.py`, add 2 zero-init heads) | TODO | — |
+| T3 — G-OPD-Flash training loop with 5 `--mode` arms (`off_policy / all_node_mh / det_mask / g_opd_flash / opd_action_strict`) | TODO | — |
+| T4 — curriculum prior + ECE calibration cache (`artifacts/teacher_curriculum_prior.json`, `..._calibration_bins.json`) | TODO | — |
+| T5 — 8-cell × 5-seed full benchmark + paired-$t$ aggregation | TODO | — |
+| T6 — `strict-OPD` ablation mode (Bernoulli sampling + REINFORCE) for reviewer defence | TODO | — |
+| T7 — deployment-shift eval (train on `base_v1`, eval on `base_v2`) for exposure-bias evidence | TODO | — |
+| T8 — FreeKD / PEKD baseline reproduction | TODO (optional, +1–1.5 GPU days) | — |
 
-See `docs/OPD_FLASH_DESIGN.md` for full algorithm, hyperparameters, theoretical sketch, risk register, and reading list.
+See `docs/OPD_FLASH_DESIGN_v3.md` for full algorithm (Phase A–F pseudocode), hyperparameter defaults, 3 propositions with proof sketches, 8-arm experiment matrix, risk register, reading list, and TKDE §5 cheat-sheet.
 
 ---
 
@@ -554,7 +565,7 @@ See `docs/OPD_FLASH_DESIGN.md` for full algorithm, hyperparameters, theoretical 
 
 **Status**: ARCHIVED on 2026-05-19. See `archive/idea3/README.md` for the full inventory + restore protocol.
 
-**Reason for archive**: the LLM-feature-design line of work (CAAFE-style summary-only prompts, OpenFE / gplearn-SR shootout, multi-LLM scaling, REL-curriculum active learning, PLM REINFORCE selection) reached a state where Base + LLM features ≈ 0.666 AUPRC matched or exceeded Base + CoVER-REL ≈ 0.609 on the YelpChi-BWGNN single-seed quick screen. In the full Base + REL + LLM stack, REL's marginal contribution shrank to ~+0.002 AUPRC. This created an internal narrative tension that conflicts with the RAER framing of Idea 1+2. The TKDE 2026 submission focuses on RAER + LREE + OPD-Flash; Idea 3 is shelved for a potential follow-up venue (KDD 2026 AI-FA workshop on LLM-for-fraud).
+**Reason for archive**: the LLM-feature-design line of work (CAAFE-style summary-only prompts, OpenFE / gplearn-SR shootout, multi-LLM scaling, REL-curriculum active learning, PLM REINFORCE selection) reached a state where Base + LLM features ≈ 0.666 AUPRC matched or exceeded Base + CoVER-REL ≈ 0.609 on the YelpChi-BWGNN single-seed quick screen. In the full Base + REL + LLM stack, REL's marginal contribution shrank to ~+0.002 AUPRC. This created an internal narrative tension that conflicts with the RAER framing of Idea 1+2. The TKDE 2026 submission focuses on RAER + LREE + G-OPD-Flash; Idea 3 is shelved for a potential follow-up venue (KDD 2026 AI-FA workshop on LLM-for-fraud).
 
 **For new sessions / new agents**: treat `archive/idea3/` as read-only historical context. **Do not** import, extend, cite, or repurpose any script / artifact from there for the current paper. The `res.md` file intentionally retains all Idea 3 sections (§7 AL, §8 LLM feature design with subsections) as the honest experimental record — but the TKDE draft will exclude them.
 
@@ -562,7 +573,7 @@ See `docs/OPD_FLASH_DESIGN.md` for full algorithm, hyperparameters, theoretical 
 1. `phase4_plm_adapter` 4-bug cascade → REINFORCE candidate selection (commit `13fb854`).
 2. `parse_llm_formulas` silent prompt-echo mis-extraction + `build_composite_features` zero-fallback → sympy validation + `fail_mode='raise'` default (commit `cc642c7`).
 
-These fixes live in the archive copy (post-fix versions) and are also reflected in `docs/OPD_FLASH_DESIGN.md` §9 (risk register) as cautionary precedent.
+These fixes live in the archive copy (post-fix versions) and are also reflected in `docs/OPD_FLASH_DESIGN_v3.md` §9 (risk register) as cautionary precedent.
 
 ---
 
@@ -574,14 +585,14 @@ The TKDE 2026 submission is built on **three independent contributions**, each w
 |---|---|---|---|---|
 | **C1** | **RAER** — contract-enforced relation-aware evidence reasoning (canonical CoVER-REL) | framework-level | base-frozen, score-blind, $\delta$-bounded residual + 4 architectural contracts + first cell-resolved **base-strength × evidence-type interaction law (Law 1)** | §1-12 of this AGENTS.md; 8/8 directional positive, 6/8 5-seed paired-$t$ sig |
 | **C2** | **LREE** — learnable relational evidence extractor | representation-level | learned per-relation GCN+MLP encoder (~14 k params) under identical C1–C4 contracts; reveals **encoder-absorbs-prototype law (Law 3)** | §13 of this AGENTS.md; 19/32 stat-sig wins on cross-cell paired-$t$; +0.10–0.23 AUPRC ★★★ on weak bases |
-| **C3** | **OPD-Flash** — on-policy distillation for graph anomaly detection | training-procedure level | first OPD instance in graph anomaly detection; multi-head dense supervision (logit + per-rel Δ + gate + proto) + cell-aware teacher-reliability gate + **contract-preserving rollouts** | §14 of this AGENTS.md + `docs/OPD_FLASH_DESIGN.md`; target ≥ 95 % AUPRC capture, ≥ 2.59 × speed-up |
+| **C3** | **G-OPD-Flash** — graph on-policy distillation (student-induced node sampling) | training-procedure level | first **graph** on-policy distillation: policy over student-selected node states (not token prefixes), GKD-style detached sampling; entropy-aware mixed Bernoulli KL; 3-head internal-state matching; **contract-preserving rollouts** under 4 hard §1 contracts; teacher-agnostic recipe (hand-crafted CoVER-REL or LREE) | §14 of this AGENTS.md + `docs/OPD_FLASH_DESIGN_v3.md`; **targets** (5-seed paired-$t$ falsifiable) ≥ 95 % AUPRC capture, ≥ 2.59 × speed-up |
 
 ### Independence guarantee
 
 No single reviewer attack collapses all three contributions:
-- Reject C1's "paradigm" framing → C2 (LREE) and C3 (OPD-Flash) still stand on their own.
-- Reject C2 because pooled summary shows 0/32 sig wins → C1 stands on Law 1; C3 stands on OPD novelty; C2 falls back to "strict prerequisite for C3's multi-head supervision."
-- Reject C3 as "OPD-LLM ported to GNN" → C1 + C2 still stand; C3 narrows to "multi-head dense distillation with contract preservation."
+- Reject C1's "paradigm" framing → C2 (LREE) and C3 (G-OPD-Flash) still stand on their own.
+- Reject C2 because pooled summary shows 0/32 sig wins → C1 stands on Law 1; C3 stands on G-OPD novelty + teacher-agnostic recipe (works with hand-crafted CoVER-REL teacher too); C2 falls back to "stronger primary instantiation of C3's teacher slot."
+- Reject C3 as "GKD ported to GNN" → C1 + C2 still stand; C3 narrows to "**Flash-RAER**: contract-preserving multi-head distillation with student-selected node sampling" (Codex `Option A` retreat path, kept warm).
 
 ### Ablation matrix earmark (for paper §6)
 
@@ -590,14 +601,14 @@ No single reviewer attack collapses all three contributions:
 | Base only | — | — | — | 0.503 |
 | C1 only (hand-crafted RAER) | ✓ | — | — | 0.609 |
 | C1 + C2 (LREE backbone) | ✓ | ✓ | — | ~ 0.640 (per Idea 2B) |
-| C1 + C3 (OPD-Flash over hand-crafted teacher) | ✓ | — | ✓ | ~ 0.580 (per Idea 2C distill capture) |
-| **C1 + C2 + C3 (full)** | ✓ | ✓ | ✓ | **target ≥ 0.620 at 0.26 × params, 2.59 × speed-up** |
+| C1 + C3 (G-OPD-Flash over hand-crafted CoVER-REL teacher) | ✓ | — | ✓ | ~ 0.580 (per Idea 2C distill capture, hypothesis to verify in T5 arm 8) |
+| **C1 + C2 + C3 (full, G-OPD-Flash over LREE teacher)** | ✓ | ✓ | ✓ | **target ≥ 0.620 at ≤ 0.32 × params, 2.59 × speed-up** (5-seed paired-$t$ falsifiable) |
 
 ### Source-of-truth map
 
 - C1 → §1–§12 of this file + `docs/TKDE_2026_SUBMISSION_PLAN.md`
 - C2 → §13 of this file
-- C3 → §14 of this file + `docs/OPD_FLASH_DESIGN.md` (v1 locked)
+- C3 → §14 of this file + `docs/OPD_FLASH_DESIGN_v3.md` (v3 active) + `docs/OPD_FLASH_DESIGN.md` (v1 historical); audit basis: `PROOF_AUDIT.md`
 - Cross-cutting paper plan → `docs/THREE_CONTRIBUTIONS.md` (authoritative claim sentences, independence audit, repo-artefact mapping)
 
 ---
