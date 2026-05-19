@@ -71,12 +71,22 @@ for ds in "${DATASETS[@]}"; do
                 gpu_id="${GPUS[$((idx % N_GPUS))]}"
                 idx=$((idx + 1))
                 runlog="$LOG_ROOT/${ds}_${base}_seed${seed}_${mode}.log"
+                # LREE teacher detection: if an evidence_extractor.pt sits next
+                # to the reasoner ckpt, pass it through so the teacher uses
+                # LREE-learned evidence (Idea-2B path).  Otherwise the teacher
+                # uses hand-crafted 9-dim relation features.
+                extractor_path="$(dirname "$teacher")/evidence_extractor.pt"
+                extractor_arg=""
+                if [[ -f "$extractor_path" ]]; then
+                    extractor_arg="--teacher_extractor_ckpt $extractor_path"
+                fi
                 (
                     PYTHONPATH=. CUDA_VISIBLE_DEVICES="$gpu_id" \
                         python scripts/train_g_opd_flash.py \
                         --config "$cfg" --seed "$seed" --device cuda:0 \
                         --mode "$mode" \
                         --teacher_ckpt "$teacher" \
+                        $extractor_arg \
                         --base_ckpt_path "$base_ckpt" \
                         --epochs 80 --patience 10 --K 2048 \
                         --run_name "g_opd_flash_${mode}" \
