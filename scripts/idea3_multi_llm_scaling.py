@@ -157,13 +157,30 @@ def compute_graph_stats(dataset: str, data, adjs: dict):
     return features, rel_names
 
 
-def build_composite_features(features: dict, rel_names: list, exprs: list) -> np.ndarray:
-    """Evaluate composite feature expressions."""
+def build_composite_features(features: dict, rel_names: list, exprs: list,
+                              fail_mode: str = "raise") -> np.ndarray:
+    """Evaluate composite feature expressions.
+
+    fail_mode controls behaviour when an expression cannot be eval'd:
+      - 'raise' (DEFAULT): raise ValueError immediately. Prevents silent
+        collapse to all-zero columns (the multi-LLM scaling parser bug
+        post-mortem). Use this for any LLM-generated or unvalidated input.
+      - 'skip'  : drop the failing expression with a warning. Output matrix
+        will have fewer columns than `exprs`. Caller must tolerate variable
+        column counts.
+      - 'zero'  : LEGACY behaviour — substitute a zero column. KEPT ONLY
+        for back-compat with old aggregate scripts. Banned for any new
+        callsite that consumes LLM output.
+    """
+    if fail_mode not in {"raise", "skip", "zero"}:
+        raise ValueError(f"unknown fail_mode {fail_mode!r}")
+
     f_map = {}
     for i, name in enumerate(rel_names):
         f_map[f"f{i+1}"] = features[f"fraud_nbr_{name}"]
         f_map[f"f{i+1+len(rel_names)}"] = features[f"log_deg_{name}"]
     composites = []
+    n_nodes = len(next(iter(features.values())))
     for expr in exprs:
         try:
             # Sanitize: only allow safe operations
@@ -176,9 +193,16 @@ def build_composite_features(features: dict, rel_names: list, exprs: list) -> np
             feat = np.nan_to_num(feat, nan=0.0, posinf=1e6, neginf=-1e6)
             composites.append(feat.reshape(-1, 1))
         except Exception as e:
-            print(f"    Warning: expression '{expr}' failed: {e}")
-            composites.append(np.zeros((len(next(iter(features.values()))), 1)))
-    return np.hstack(composites) if composites else np.zeros((len(next(iter(features.values()))), 0))
+            if fail_mode == "raise":
+                raise ValueError(
+                    f"build_composite_features: expression {expr!r} failed: {e}"
+                ) from e
+            elif fail_mode == "skip":
+                print(f"    [WARN] expression {expr!r} skipped: {e}")
+            else:  # 'zero' (legacy)
+                print(f"    [LEGACY-WARN] expression {expr!r} → zero column: {e}")
+                composites.append(np.zeros((n_nodes, 1)))
+    return np.hstack(composites) if composites else np.zeros((n_nodes, 0))
 
 
 def eval_lr(X_train, y_train, X_test, y_test, seed: int) -> dict:
@@ -192,35 +216,158 @@ def eval_lr(X_train, y_train, X_test, y_test, seed: int) -> dict:
     }
 
 
-def parse_llm_formulas(response: str) -> list[str]:
-    """Extract formula strings from LLM JSON response."""
-    # Try JSON parse
+def _sympy_valid_expr(expr: str, allowed_vars: set[str]) -> bool:
+    """Validate that `expr` is a real math expression using only allowed
+    variables (a subset of {f1..f6}) and a fixed function whitelist.
+
+    Returns False for prompt-echoed feature descriptions (which the old
+    line-based regex used to mis-extract — see multi-LLM parser bug
+    post-mortem in commit history).
+    """
     try:
-        # Find JSON array in response
-        match = re.search(r'\[.*\]', response, re.DOTALL)
-        if match:
-            items = json.loads(match.group())
-            formulas = [item.get("formula", item.get("expr", "")) for item in items]
-            return [f for f in formulas if f]
-    except json.JSONDecodeError:
-        pass
-    # Fallback: extract lines that look like formulas
-    formulas = []
-    for line in response.split("\n"):
-        line = line.strip()
-        if any(op in line for op in ["f1", "f2", "f3", "f4", "f5", "f6"]) and \
-           any(op in line for op in ["+", "-", "*", "/", "log", "sqrt", "max", "min"]):
-            # Clean up
-            f = re.sub(r'^[\d\.\-\s]*[\"\']*formula[\"\']*\s*[:=]\s*[\"\']*', '', line)
-            f = re.sub(r'[\"\']\s*,?\s*$', '', f).strip()
-            if f and len(f) < 100:
-                formulas.append(f)
-    return formulas[:5]
+        import sympy as sp
+    except ImportError:
+        # If sympy is missing, fall back to a structural heuristic: the
+        # expression must NOT contain alphabetic tokens other than allowed
+        # names + function names.
+        ALLOWED_NAMES = allowed_vars | {"log", "sqrt", "abs", "max", "min", "Max", "Min", "Abs"}
+        tokens = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", expr)
+        if not tokens:
+            return False
+        if not (set(tokens) & allowed_vars):
+            return False
+        if set(tokens) - ALLOWED_NAMES:
+            return False
+        # Reject if expr contains ':' (definition syntax) or natural-language words
+        if any(ch in expr for ch in (":", "?", "!")):
+            return False
+        return True
+
+    sym_map = {name: sp.Symbol(name) for name in allowed_vars}
+    funcs = {
+        "log": sp.log, "sqrt": sp.sqrt, "abs": sp.Abs,
+        "max": sp.Max, "min": sp.Min, "Max": sp.Max, "Min": sp.Min, "Abs": sp.Abs,
+    }
+    try:
+        e = sp.sympify(expr, locals={**sym_map, **funcs})
+    except (sp.SympifyError, SyntaxError, TypeError, ValueError, AttributeError):
+        return False
+    free = {str(s) for s in e.free_symbols}
+    if not (free & allowed_vars):
+        return False
+    if free - allowed_vars:
+        # Means parser caught a description word as an identifier
+        return False
+    return True
+
+
+def parse_llm_formulas(response: str, n_required: int = 5,
+                        strict: bool = True) -> list[str]:
+    """Extract `n_required` validated formulas from an LLM response.
+
+    Strategies (tried in order):
+      1. JSON arrays of the form `[{"formula": "..."}, ...]` (instruct
+         models, when they obey the prompt).
+      2. Numbered list ("1. expr", "2. expr", ...) typically appearing
+         after </think> or at the response tail.
+      3. Backtick-delimited inline code blocks (` ``f1*f3`` `).
+      4. Line-based fallback: each line must contain BOTH an `fN` token
+         AND a true arithmetic operator (we exclude '-' here because the
+         prompt itself uses '-' as a bullet marker; mis-matching '-'
+         caused the original silent parser bug).
+
+    EVERY candidate is sympy-validated via `_sympy_valid_expr`: it must
+    parse, reference at least one of f1..f6, and contain no other free
+    symbols (which would indicate the parser swallowed natural-language
+    words).
+
+    If `strict=True` (default) and fewer than `n_required` validated
+    formulas are found, raises `ValueError` with a response excerpt.
+    Previously this routine fell back silently and produced zero columns,
+    which caused 4 different base LLMs to collide on
+    AUPRC = 0.5002955616217414 (the base-only baseline).
+    """
+    allowed_vars = {f"f{i}" for i in range(1, 7)}
+    candidates: list[str] = []
+
+    # ── Strategy 1: JSON arrays ────────────────────────────────────────────
+    for m in re.finditer(r"\[[\s\S]*?\]", response):
+        snippet = m.group()
+        try:
+            items = json.loads(snippet)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict):
+                expr = item.get("formula") or item.get("expr") or ""
+                if expr:
+                    candidates.append(str(expr).strip())
+            elif isinstance(item, str):
+                candidates.append(item.strip())
+
+    # ── Strategy 2: Numbered list in tail (after </think> if present) ─────
+    tail = response.split("</think>", 1)[-1] if "</think>" in response else response
+    numbered_pat = re.compile(
+        r"(?:^|\n)\s*\d+\s*[\.\)]\s*[`\"']?\s*([^`\"'\n]+?)\s*[`\"']?\s*(?=\n|$)"
+    )
+    for m in numbered_pat.finditer(tail):
+        cand = m.group(1).strip().rstrip(",;.")
+        if cand:
+            candidates.append(cand)
+
+    # ── Strategy 3: Backtick inline code ─────────────────────────────────────
+    for m in re.finditer(r"`([^`\n]+)`", response):
+        candidates.append(m.group(1).strip())
+
+    # ── Strategy 4: line-based fallback ──────────────────────────────────────
+    # We require an arithmetic op that is NOT '-' so that prompt-bullet
+    # markers like '- f1: fraction of ...' do not match.
+    ARITHMETIC_OPS = ("+", "*", "/", "log", "sqrt", "max", "min", "abs")
+    for raw in response.split("\n"):
+        line = raw.strip().rstrip(",;.")
+        # Strip leading bullet / numbering / quoting markers.
+        line = re.sub(r"^[\-\*\d\.\)\s`\"']+", "", line).strip()
+        # Strip key prefixes like 'formula:' / 'expr:'.
+        line = re.sub(
+            r'^["\']*(?:formula|expr)["\']*\s*[:=]\s*["\']*',
+            "", line, flags=re.IGNORECASE,
+        )
+        line = re.sub(r'["\']\s*,?\s*$', "", line).strip()
+        if not line or len(line) > 160:
+            continue
+        if ":" in line:  # natural-language definition, not an expression
+            continue
+        has_var = any(f"f{i}" in line for i in range(1, 7))
+        has_op = any(op in line for op in ARITHMETIC_OPS)
+        if has_var and has_op:
+            candidates.append(line)
+
+    # ── Validate via sympy and deduplicate (preserving order) ─────────────
+    seen: set[str] = set()
+    validated: list[str] = []
+    for c in candidates:
+        if c in seen:
+            continue
+        if _sympy_valid_expr(c, allowed_vars):
+            validated.append(c)
+            seen.add(c)
+        else:
+            seen.add(c)  # don't retry obviously-invalid candidates
+
+    if strict and len(validated) < n_required:
+        raise ValueError(
+            f"parse_llm_formulas: only {len(validated)}/{n_required} validated. "
+            f"Response excerpt (first 400 chars):\n{response[:400]}"
+        )
+
+    return validated[:n_required]
 
 
 # ─── Phase 1: LLM Inference ─────────────────────────────────────────────────
 def run_llm_inference(model_name: str, model_info: dict, device: str,
-                      max_new_tokens: int = 1024) -> dict:
+                      max_new_tokens: int = 2048) -> dict:
     """Run a single LLM to generate 5 composite formulas."""
     from transformers import AutoTokenizer, AutoModelForCausalLM
 
@@ -289,7 +436,10 @@ def run_llm_inference(model_name: str, model_info: dict, device: str,
     # Decode only new tokens
     new_tokens = output[0][inputs["input_ids"].shape[1]:]
     response = tokenizer.decode(new_tokens, skip_special_tokens=True)
-    formulas = parse_llm_formulas(response)
+    # strict=False so that base models that emit <think> without a final
+    # JSON / list (because they hit max_new_tokens) still surface whatever
+    # validated formulas we could recover, instead of crashing phase 1.
+    formulas = parse_llm_formulas(response, n_required=5, strict=False)
 
     print(f"  Generated in {gen_time:.1f}s, got {len(formulas)} formulas")
     print(f"  Response preview: {response[:300]}...")
@@ -387,7 +537,20 @@ def phase2_evaluate_quick(llm_results: dict, device: str) -> dict:
             eval_results[model_name] = {"auprc": 0.0, "n_formulas": len(formulas), "formulas": formulas}
             continue
 
-        llm_feats = build_composite_features(features, rel_names, formulas)
+        try:
+            llm_feats = build_composite_features(features, rel_names, formulas, fail_mode="raise")
+        except ValueError as e:
+            # Bug-safety: refuse to silently collapse to base-only. If any
+            # parsed formula fails sympy/eval, record the model as INVALID
+            # (auprc=NaN) rather than producing a 0-column / base-only
+            # collision (the multi-LLM parser bug post-mortem).
+            print(f"  {model_name}: INVALID formulas — {e}")
+            eval_results[model_name] = {
+                "auprc": float("nan"), "roc_auc": float("nan"),
+                "n_formulas": len(formulas), "formulas": formulas,
+                "error": str(e),
+            }
+            continue
         X_combo = np.column_stack([X_base, llm_feats])
         metrics = eval_lr(X_combo[train_mask], y[train_mask], X_combo[test_mask], y[test_mask], seed)
         eval_results[model_name] = {**metrics, "n_formulas": len(formulas), "formulas": formulas}
@@ -464,7 +627,13 @@ def phase3_full_benchmark(top_models: list[str], llm_results: dict, device: str)
                 formulas = llm_results.get(model_name, {}).get("formulas", [])
                 if not formulas:
                     continue
-                llm_feats = build_composite_features(features, rel_names, formulas)
+                try:
+                    llm_feats = build_composite_features(features, rel_names, formulas, fail_mode="raise")
+                except ValueError as e:
+                    print(f"    [phase3 skip] {model_name}@{dataset}-{base}-seed{seed}: {e}")
+                    r[f"base_{model_name}"] = {"auprc": float("nan"), "roc_auc": float("nan"), "error": str(e)}
+                    r[f"base_rel_{model_name}"] = {"auprc": float("nan"), "roc_auc": float("nan"), "error": str(e)}
+                    continue
                 X_combo = np.column_stack([X_base, llm_feats])
                 metrics = eval_lr(X_combo[train_mask], y[train_mask], X_combo[test_mask], y[test_mask], seed)
                 r[f"base_{model_name}"] = metrics
@@ -870,7 +1039,15 @@ def main():
     parser.add_argument("--device", default="cuda:1")
     args = parser.parse_args()
 
-    phases = ["1", "2", "3", "4", "5"] if args.phase == "all" else [args.phase]
+    if args.phase == "all":
+        phases = ["1", "2", "3", "4", "5"]
+    else:
+        # Support comma-separated phases like "1,2" or "1,2,5"
+        phases = [p.strip() for p in args.phase.split(",") if p.strip()]
+        # Validate
+        for p in phases:
+            if p not in {"1", "2", "3", "4", "5"}:
+                raise ValueError(f"Unknown phase {p!r} (expected one of 1/2/3/4/5/all)")
     out_dir = Path("artifacts/results/idea3_scaling")
     out_dir.mkdir(parents=True, exist_ok=True)
 

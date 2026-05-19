@@ -474,6 +474,34 @@ REL+LLM significantly outperforms REL alone (★★). REL+LLM ≈ REL+XGBoost/Li
 
 LLM composites significantly beat random formulas (★), systematic pairwise/log/sqrt transforms (★★), SOTA AutoFE OpenFE (★, NeurIPS 2023), and gplearn-based Symbolic Regression (★★) — proving the LLM's feature design exceeds both brute-force search and learned AutoFE baselines. Win-rate vs OpenFE: 29/40 (72%); vs GP: 31/40 (78%). Caveat: pooled win driven by YelpChi cells (+0.05 to +0.22 AUPRC); on Amazon-GCN/-GAT, LLM loses to OpenFE (−0.061, −0.046).
 
+#### 8.5.1 Split-by-dataset paired-t (preregistered honest disclosure)
+
+LLM superiority over AutoFE baselines is **not uniform across datasets**. To prevent Simpson's-paradox–style claims, we report YelpChi-only and Amazon-only paired-t separately. Each is n=20 (4 bases × 5 seeds), df=19, sig thresholds |t|>2.09→★, |t|>2.86→★★, |t|>3.88→★★★.
+
+**YelpChi (n=20, df=19) — LLM strongly wins**:
+
+| Comparison | Δ | t | p | sig |
+|---|---:|---:|---:|:---:|
+| Base+LLM vs Base only | +0.1935 | +30.660 | <0.0001 | ★★★ |
+| Base+LLM vs Base+raw (LR) | -0.0150 | -21.671 | <0.0001 | ★★★ |
+| Base+LLM vs Random formula (best of 100) | +0.0611 | +14.754 | <0.0001 | ★★★ |
+| Base+LLM vs Systematic transforms (best) | +0.0815 | +24.152 | <0.0001 | ★★★ |
+| Base+LLM vs Base+OpenFE (NeurIPS 2023) | **+0.1563** | **+9.579** | <0.0001 | **★★★** |
+| Base+LLM vs Base+GP (gplearn-SR) | +0.0572 | +9.735 | <0.0001 | ★★★ |
+
+**Amazon (n=20, df=19) — LLM ties or loses**:
+
+| Comparison | Δ | t | p | sig |
+|---|---:|---:|---:|:---:|
+| Base+LLM vs Base only | +0.0458 | +3.310 | 0.0037 | ★★ |
+| Base+LLM vs Base+raw (LR) | -0.0384 | -3.523 | 0.0023 | ★★ |
+| Base+LLM vs Random formula (best of 100) | -0.0072 | -1.572 | 0.1325 | ns |
+| Base+LLM vs Systematic transforms (best) | -0.0006 | -0.123 | 0.9038 | ns |
+| Base+LLM vs Base+OpenFE (NeurIPS 2023) | **-0.0251** | **-2.948** | 0.0083 | **★★ (LLM loses)** |
+| Base+LLM vs Base+GP (gplearn-SR) | +0.0057 | +0.814 | 0.4258 | ns |
+
+**Verdict (revised)**: LLM-designed composites are demonstrably superior on **YelpChi** (weak-base + structurally-rich relations, where the LLM's domain knowledge of fraud patterns translates into useful formulas), but on **Amazon** (saturated strong bases + simpler relation structure) the LLM is on par with random/systematic search and loses to OpenFE. The pooled win in §8.5 must be read as "LLM wins on YelpChi by a wide margin; on Amazon, LLM ≈ AutoFE." This split is consistent with the §5.1 base-strength × evidence-type interaction law established for Idea 1.
+
 ### 8.6 CAAFE/PromptFE Direct Comparison (8 cells × 5 seeds = 40 pairs, df=39)
 
 | Comparison | Δ | t | p | sig |
@@ -486,30 +514,36 @@ LLM composites significantly beat random formulas (★), systematic pairwise/log
 
 Our summary-only approach (showing only aggregated class statistics to the LLM) significantly beats both CAAFE-style (data-driven, raw rows) and PromptFE-style (structured prompts with semantics) at α=0.05. CAAFE and PromptFE are statistically indistinguishable from each other. Key insight: LLMs can design effective features from concise statistical summaries — no raw data access needed (privacy advantage).
 
-### 8.7 Multi-LLM Scaling (YelpChi-BWGNN seed_42, quick screen)
+### 8.7 Multi-LLM Scaling (YelpChi-BWGNN seed_42, quick screen — **revised after parser bug fix**)
 
-| Model | Params | AUPRC | Generated / Selected Formulas |
-|---|---:|---:|---|
-| qwen3-0.6b | 600M | 0.5003 | Repeats input features (no composite) |
-| qwen3-4b | 4.0B | 0.5003 | Repeats input features (no composite) |
-| **qwen3-4b-instruct** | **4.0B** | **0.6641** | **Open-vocabulary: f1+f3-f2, sqrt(f4*f5)/(f6+1), max-min(f1,f2,f3), log(1+f1*f5), f4/f6-f5/f6** |
-| qwen3-8b | 8.0B | 0.5003 | Repeats input features (no composite) |
-| bert-base (PLM, REINFORCE-select from 20-pool) | 110M | **0.6903** | f4*log(f6+1), f2*f5, f3*f6, f1*f4, sqrt(f4*f5) |
-| roberta-base (PLM, REINFORCE-select from 20-pool) | 125M | **0.6838** | f1*f4, max(f3,f5)-f4, f1-f2, sqrt(f1+f2), sqrt(f4*f5) |
+> **Post-mortem**: An earlier version of `parse_llm_formulas` silently mis-extracted prompt-echoed feature descriptions (lines beginning `"- f1: fraction of RUR..."`) as formulas. `eval()` then crashed, and the buggy `build_composite_features` silently substituted zero columns — so 4 different base LLMs collapsed onto AUPRC = 0.5002955616217414 (the base-only baseline), identical to 17 decimal places. The fix (commit `<this commit>`) routes every candidate through a sympy validator that enforces (i) parseability, (ii) at least one of f1..f6 as a free symbol, (iii) no extra free symbols (which would indicate prompt-text contamination). On failure `build_composite_features` now raises rather than silently zero-substituting. Below are the **corrected** results.
 
-**Two-stage decomposition of LLM contribution**:
+| Model | Params | AUPRC | ROC-AUC | n_formulas (validated) | Sample formulas |
+|---|---:|---:|---:|---:|---|
+| base_only | — | 0.5003 | 0.827 | — | — |
+| base_raw (12-dim LR upper bound) | — | 0.6792 | 0.909 | — | — |
+| base+CoVER-REL | — | 0.6085 | 0.884 | — | — |
+| **qwen3-0.6b (base)** | **0.6B** | **0.6607** | **0.902** | **5** | `f1*f3+f4*f5*f6`, `max(f1,f2,f3)+log(f4+f5+f6)`, `sqrt(f1+f2+f3)*log(f4+f5+f6)`, `(f1/f2)*(f3/f4)*log(f5+f6)`, `f1+f2-f3*log(f4+f5+f6)` |
+| qwen3-4b (base) | 4B | 0.5888 | 0.860 | 5 | `f1*f3`, `f4+f5+f6`, `(f1-f2)/(f3+1)`, `sqrt(f1*f2*f3)`, `log(f4+f5+f6+1)` |
+| qwen3-4b-instruct | 4B | 0.6524 | 0.901 | 5 | `f1+f3-f5`, `sqrt(f1*f3)/(1+f5)`, `max(f1,f2,f3)*(1/(1+f4+f5+f6))`, `log(1+f1)+log(1+f3)-log(1+f6)`, `f4*f5/(f1+f2+f3+1)` |
+| qwen3-8b (base) | 8B | 0.5985 | 0.858 | 4 | `f1*f4`, `f2*f5`, `f3*f6`, `(f1+f2+f3)/(f4+f5+f6)` |
+| bert-base (PLM, REINFORCE-select from 20-pool) | 110M | 0.6903 | 0.911 | 5 | `f4*log(f6+1)`, `f2*f5`, `f3*f6`, `f1*f4`, `sqrt(f4*f5)` |
+| roberta-base (PLM, REINFORCE-select from 20-pool) | 125M | 0.6838 | 0.908 | 5 | `f1*f4`, `max(f3,f5)-f4`, `f1-f2`, `sqrt(f1+f2)`, `sqrt(f4*f5)` |
 
-1. **Pool design (open-vocabulary brainstorming)** — Qwen3-4B-Instruct generates a 20-formula candidate pool de novo from statistical summaries alone. Without this LLM-brainstormed pool, the REINFORCE selector has nothing to choose from. This is the irreducible LLM contribution.
+**Revised findings**:
 
-2. **Selection within pool** — Given the same 20-candidate pool, PLMs (BERT/RoBERTa) trained via REINFORCE on val AUPRC find slightly better 5-subsets (0.6903/0.6838) than Qwen3-Instruct's one-shot pick (0.6641). **Qwen3-Instruct's zero-shot selection captures 96.2% of the REINFORCE-optimal AUPRC** — instruction alignment alone yields near-selection-optimal subsets without RL.
+- **Scaling law is reversed / weak**: 0.6B base > 4B-instruct > 8B base > 4B base. Pearson(log10(params), AUPRC) = **negative** in this single-seed screen. Param count is decidedly NOT a quality monotone.
+- **Base models can design useful composites** — the earlier "only instruction-tuned LLMs design meaningful composites" claim was a **parser-bug artifact**, not a real finding. Once the parser is fixed, even the smallest 0.6B base model achieves AUPRC 0.66, surpassing the 4B-instruct model. The 4B base / 8B base underperform because they emit formulas with numerical edge cases (log of 0, divide by 0 — visible in the rerun log).
+- **Instruction-tuning's actual role is format compliance, not idea quality**: the 4B-instruct model is the only one that consistently emits a clean JSON array (1338 response chars), whereas base models embed formulas inside long `<think>` blocks (4000-8000 chars). The new parser tolerates both; the old one only handled JSON.
+- **PLMs (BERT/RoBERTa via REINFORCE) remain the strongest** at 0.6903/0.6838, but this is because they have access to a 20-formula candidate pool brainstormed by Qwen3-Instruct in advance and can search exhaustively for the best 5-subset on val AUPRC. The PLMs themselves are not generators.
+- **Two-stage decomposition still holds, with caveat**: pool brainstorming + select-and-weight is the right structure. The pool can come from a 0.6B base LLM (0.66) or a 4B-instruct LLM (0.65) — both are non-trivial. The selection step (PLM-REINFORCE) adds ~3 pp on top.
+- **Single-seed caveat**: All multi-LLM rows above are from one seed_42 generation on YelpChi-BWGNN. LLM generation is stochastic (`do_sample=True, temperature=0.6`), so a different sample of formulas would land at a different AUPRC. The 0.6B-beats-4B-instruct ordering is **not robust** — establishing the actual scaling shape requires 5-seed × 2 model families (TPAMI revision item).
 
-**Key findings**:
-
-- **Scaling law collapses on open-vocabulary generation**: base Qwen3 (0.6B / 4B / 8B) all collapse to base-only AUPRC (0.5003) by restating input features verbatim. Only the instruction-tuned 4B variant produces meaningful composites. Param count is not the gate.
-- **Encoder PLMs cannot generate new candidates** — BERT/RoBERTa have no autoregressive head. Their role is bounded to *selection from a pre-designed pool*; the pool itself must come from an instruction-tuned LLM.
-- **LLM-generated pool is the bottleneck, not selection within it**: the 4.4 pp gap between Qwen3-Instruct (0.6641) and BERT-REINFORCE (0.6903) is small relative to the 16.4 pp gap between pool-less base-only (0.5003) and any pool-using method.
-
-**Implementation note**: A prior version of `phase4_plm_adapter` hard-coded `selected_indices = [0..4]` and used a detached numpy weight vector, so the PLM never influenced inference and two different PLMs converged to identical test AUPRC (0.6669). The current version (commit `<follow-up>`) implements REINFORCE selection from the 20-pool with Gumbel-top-k sampling and val-AUPRC reward. See `scripts/idea3_multi_llm_scaling.py:phase4_plm_adapter` for the fixed pipeline.
+**Implementation note (audit trail)**:
+- `scripts/idea3_multi_llm_scaling.py:parse_llm_formulas` — strict sympy validation, `<think>`/JSON/numbered-list/backtick strategies, optional `strict=True` raises when fewer than `n_required` formulas validate.
+- `scripts/idea3_multi_llm_scaling.py:build_composite_features` and `scripts/idea3_full_benchmark.py:build_composite_features` — both now require explicit `fail_mode ∈ {raise, skip, zero}`; default is `raise`. The legacy `zero` mode is documented as banned in new callsites.
+- `scripts/idea3_multi_llm_scaling.py:main` — `--phase 1,2` now correctly splits into `["1","2"]` (was previously `["1,2"]`, silently skipping all phases).
+- `scripts/idea3_multi_llm_scaling.py:run_llm_inference` — `max_new_tokens` bumped 1024 → 2048 so base models can emit their full reasoning chain plus a closing answer.
 
 ### 8.8 Leakage Audit
 

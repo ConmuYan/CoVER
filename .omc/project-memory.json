@@ -180,32 +180,38 @@
   "hotPaths": [
     {
       "path": "scripts/idea3_openfe_comparison.py",
-      "accessCount": 24,
-      "lastAccessed": 1779125058734,
-      "type": "file"
-    },
-    {
-      "path": "res.md",
-      "accessCount": 17,
-      "lastAccessed": 1779176808055,
+      "accessCount": 25,
+      "lastAccessed": 1779177508068,
       "type": "file"
     },
     {
       "path": "scripts/idea3_multi_llm_scaling.py",
-      "accessCount": 15,
-      "lastAccessed": 1779176367984,
+      "accessCount": 25,
+      "lastAccessed": 1779177601876,
+      "type": "file"
+    },
+    {
+      "path": "res.md",
+      "accessCount": 19,
+      "lastAccessed": 1779177937280,
       "type": "file"
     },
     {
       "path": "scripts/idea3_full_benchmark.py",
-      "accessCount": 8,
-      "lastAccessed": 1779118401775,
+      "accessCount": 10,
+      "lastAccessed": 1779177765098,
       "type": "file"
     },
     {
       "path": "artifacts/tables/idea3_caafe_comparison.md",
       "accessCount": 5,
       "lastAccessed": 1779122288077,
+      "type": "file"
+    },
+    {
+      "path": "scripts/idea3_caafe_comparison.py",
+      "accessCount": 5,
+      "lastAccessed": 1779177557021,
       "type": "file"
     },
     {
@@ -224,12 +230,6 @@
       "path": "artifacts/tables/idea3_full_benchmark.md",
       "accessCount": 3,
       "lastAccessed": 1779118363993,
-      "type": "file"
-    },
-    {
-      "path": "scripts/idea3_caafe_comparison.py",
-      "accessCount": 3,
-      "lastAccessed": 1779121541937,
       "type": "file"
     },
     {
@@ -266,6 +266,12 @@
       "path": "artifacts/results/idea3_scaling/plm_adapter_results.json",
       "accessCount": 2,
       "lastAccessed": 1779176761379,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/results/idea3_scaling/quick_eval_yelpchi_bwgnn_seed42.json",
+      "accessCount": 2,
+      "lastAccessed": 1779177556937,
       "type": "file"
     },
     {
@@ -338,6 +344,12 @@
       "path": "artifacts/tables/idea3_openfe_comparison.json",
       "accessCount": 1,
       "lastAccessed": 1779174882083,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/results/idea3_scaling/llm_formulas.json",
+      "accessCount": 1,
+      "lastAccessed": 1779177035067,
       "type": "file"
     }
   ]

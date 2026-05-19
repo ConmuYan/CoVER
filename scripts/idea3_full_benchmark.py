@@ -121,8 +121,22 @@ def compute_graph_stats(dataset: str, data, adjs: dict):
     return features, rel_names
 
 
-def build_composite_features(features: dict, rel_names: list, exprs: list) -> np.ndarray:
-    """Evaluate composite feature expressions."""
+def build_composite_features(features: dict, rel_names: list, exprs: list,
+                              fail_mode: str = "raise") -> np.ndarray:
+    """Evaluate composite feature expressions.
+
+    `exprs` is a list of (expr_str, description) tuples (LLM_EXPRS schema).
+
+    fail_mode controls behaviour when an expression cannot be eval'd:
+      - 'raise' (DEFAULT): raise ValueError immediately. Prevents silent
+        collapse to all-zero columns (the multi-LLM scaling parser bug
+        post-mortem).
+      - 'skip'  : drop the failing expression with a warning.
+      - 'zero'  : LEGACY zero-substitute. Banned in any new callsite.
+    """
+    if fail_mode not in {"raise", "skip", "zero"}:
+        raise ValueError(f"unknown fail_mode {fail_mode!r}")
+
     # Map f1..fN to actual features
     f_map = {}
     for i, name in enumerate(rel_names):
@@ -130,9 +144,10 @@ def build_composite_features(features: dict, rel_names: list, exprs: list) -> np
         f_map[f"f{i+1+len(rel_names)}"] = features[f"log_deg_{name}"]
 
     composites = []
+    n_nodes = len(next(iter(features.values())))
     for expr, _ in exprs:
         try:
-            feat = eval(expr, {
+            feat = eval(expr, {"__builtins__": {}}, {
                 **f_map,
                 "log": np.log, "sqrt": np.sqrt, "abs": np.abs,
                 "max": np.maximum, "min": np.minimum,
@@ -140,10 +155,17 @@ def build_composite_features(features: dict, rel_names: list, exprs: list) -> np
             feat = np.nan_to_num(feat, nan=0.0, posinf=1e6, neginf=-1e6)
             composites.append(feat.reshape(-1, 1))
         except Exception as e:
-            print(f"  Warning: {expr} failed: {e}")
-            composites.append(np.zeros((len(next(iter(features.values()))), 1)))
+            if fail_mode == "raise":
+                raise ValueError(
+                    f"build_composite_features: expression {expr!r} failed: {e}"
+                ) from e
+            elif fail_mode == "skip":
+                print(f"  [WARN] expression {expr!r} skipped: {e}")
+            else:  # 'zero' (legacy)
+                print(f"  [LEGACY-WARN] expression {expr!r} → zero column: {e}")
+                composites.append(np.zeros((n_nodes, 1)))
 
-    return np.hstack(composites)
+    return np.hstack(composites) if composites else np.zeros((n_nodes, 0))
 
 
 def generate_all_pairwise_transforms(features: dict, rel_names: list) -> tuple[np.ndarray, list[str]]:
