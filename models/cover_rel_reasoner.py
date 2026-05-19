@@ -275,6 +275,7 @@ class CoVERRelReasoner(nn.Module):
         relation_features: Tensor,
         judge_features: Tensor | None = None,
         judge_mask: Tensor | None = None,
+        return_heads: bool = False,
     ) -> dict[str, Tensor]:
         """Run the rel-only forward pass.
 
@@ -286,6 +287,24 @@ class CoVERRelReasoner(nn.Module):
                 in ``relation_names`` order, shape ``(N, R * rel_stat_dim)``.
             judge_features, judge_mask: **Deprecated.**  Must be ``None``.
                 Passing non-None raises ``NotImplementedError``.
+            return_heads: If True, the return dict additionally exposes the
+                G-OPD-Flash three-head supervision signals consumed by
+                ``models/flash_adapter.py``:
+
+                * ``logit``      (N,)         — alias of ``final_logit``
+                * ``s_per_r``    (N, R)       — per-relation pre-gate scalar
+                                                   ``s_r = Head_r(h_{i,r})``
+                * ``c_per_r``    (N, R)       — per-relation gate-weighted
+                                                   contribution ``c_r = g_r * s_r``
+                                                   (Σ_r c_r = u_i = atanh(Δ_rel/δ_max))
+                * ``gate``       (N, R)       — alias of ``relation_gate``
+                * ``p``          (N,)         — Bernoulli probability σ(final_logit)
+                * ``delta_pre_tanh`` (N,)     — pre-tanh sum ``u_i``; useful for
+                                                   the ranking-stability lemma (P2)
+                                                   reconstruction unit test
+
+                These keys are *added* on top of the standard return dict so
+                back-compat callers (``return_heads=False``) see no change.
 
         Returns:
             A dict with::
@@ -299,6 +318,9 @@ class CoVERRelReasoner(nn.Module):
                 judge_used_mask   (N,) bool       # always False (backward-compat)
                 fused_rel_h       (N, rel_hidden_dim)
                 relation_strength (N, R)          # |Head_r(h_i,r)| post-Head
+
+            With ``return_heads=True`` adds: logit, s_per_r, c_per_r, gate, p,
+            delta_pre_tanh (see arg docstring above).
         """
         if judge_features is not None or (judge_mask is not None and bool(judge_mask.any())):
             raise NotImplementedError(_DEPRECATION_MSG)
@@ -390,7 +412,7 @@ class CoVERRelReasoner(nn.Module):
         zero_n = torch.zeros(n, device=device, dtype=dtype)
         zero_n_bool = torch.zeros(n, device=device, dtype=torch.bool)
 
-        return {
+        out = {
             "final_logit": final_logit,
             "rel_only_logit": rel_only_logit,
             "relation_gate": relation_gate,
@@ -401,6 +423,28 @@ class CoVERRelReasoner(nn.Module):
             "fused_rel_h": fused_rel_h,
             "relation_strength": relation_strength,
         }
+
+        if return_heads:
+            # G-OPD-Flash supervision heads (design v3 §3.3 / §3.4 / Phase B).
+            # `s_per_r[i, r] = Head_r(h_{i,r})` is the per-relation pre-gate
+            # scalar; `c_per_r[i, r] = g_{i,r} * s_per_r[i, r]` is the
+            # gate-weighted contribution.  Σ_r c_per_r = u_i (pre-tanh sum),
+            # so `delta_rel = δ_max * tanh(Σ_r c_per_r)` should hold up to
+            # float precision — verified by tests/test_teacher_heads_exposed.py.
+            s_per_r = head_stack                            # (N, R)
+            c_per_r = relation_gate * head_stack            # (N, R)
+            delta_pre_tanh = c_per_r.sum(dim=-1)            # (N,) = u_i
+            p = torch.sigmoid(final_logit)                  # (N,) Bernoulli
+            out.update({
+                "logit": final_logit,
+                "s_per_r": s_per_r,
+                "c_per_r": c_per_r,
+                "gate": relation_gate,
+                "p": p,
+                "delta_pre_tanh": delta_pre_tanh,
+            })
+
+        return out
 
 
 __all__ = ["CoVERRelReasoner"]

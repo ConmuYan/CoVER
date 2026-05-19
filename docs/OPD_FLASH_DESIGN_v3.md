@@ -1,9 +1,9 @@
 # G-OPD-Flash: Graph On-Policy Distillation for Contract-Preserving Lightweight Reasoners
 
-**Status**: Design v3 — supersedes v1 (`docs/OPD_FLASH_DESIGN.md`, locked 2026-05-19).
+**Status**: Design **v3.2** — supersedes v3.1 (Opus round-4 critic 3 CRITICAL + 5 MAJOR fixes, 2026-05-19) which superseded v3 (Codex round-3 conditional-accept) which superseded v1 (`docs/OPD_FLASH_DESIGN.md`, FAIL/critical_gap audit).
 **Scope**: C3 of TKDE 2026 submission; rewrite of vanilla off-policy KL distill (Idea 2C).
 **Target paper section**: §5 of TKDE 2026 submission.
-**Audit basis**: Codex `gpt-5.5` xhigh proof-checker (`PROOF_AUDIT.md`, FAIL/critical_gap on v1) + main-thread Opus 4.7 Q1–Q10 review.
+**Audit basis**: Codex `gpt-5.5` xhigh proof-checker (`PROOF_AUDIT.md`, FAIL/critical_gap on v1) + Opus 4.7 Q1–Q10 review + Codex round-3 conditional-accept (5 MUST-FIX + 4 minor → v3.1) + Opus 4.7 critic round-4 (3 CRITICAL + 5 MAJOR → v3.2 — current).
 
 ---
 
@@ -55,6 +55,29 @@ Codex `gpt-5.5` xhigh round-3 review verdict: v3 **accepted as implementation de
 
 - ✅ **Implementation design**: ACCEPTED — T1–T7 may proceed.
 - ⏸ **Paper claim lock**: NOT YET — defer until T5 + T7 5-seed paired-$t$ evidence confirms (or falsifies) targets. The narrowed "first contract-preserving …" framing is the new safety boundary; if T5 falsifies $\geq 95\,\%$ capture target, retreat further to **Flash-RAER** (Codex `Option A` retreat path, `docs/TKDE_COMPLETED_CONTRIBUTIONS.md`).
+
+---
+
+## 0.3 v3.1 → v3.2 revision log (Opus round-4 critic — implementation hardening)
+
+Opus 4.7 critic round-4 review verdict: v3.1 design + T1–T7 implementation passed unit/smoke tests, but **2 CRITICAL contract holes + 5 MAJOR design/implementation flaws** were surfaced that prior Codex rounds did not catch. All 7 are absorbed in v3.2 (code patches landed in current commit; design doc revisions below).
+
+| # | Severity | Site (v3.1) | Issue | v3.2 fix |
+|---|---|---|---|---|
+| CR-1 | CRITICAL | `tests/test_opd_flash_contracts.py::test_C2_score_blind_static_pass` | AST pass bypassable by `b_i = base_logit.detach()` aliasing — would silently accept a maintenance regression that feeds base logit into the trunk through the alias | Replaced with **runtime counterfactual hook**: perturb `base_logit` by $10^9$, assert `delta_phi / gate_logits / gate_probs / c_per_r / s_per_r` bit-identical (the trunk MUST be a pure function of `(base_z, rel_features)`). Bypass-proof: any leak shows up as a numeric diff |
+| CR-2 | CRITICAL | `aggregate_g_opd_flash.py:194-202` pooled paired-$t$ | Treated 40 cell-seed AUPRCs as IID — pooled $p$-value would be **statistically invalid** (inflates apparent sample size; ignores cell-level variance structure) | Deleted pooled paired-$t$ from per-mode summary; cross-cell reporting now uses **directional + sig-cells counts** (idea-2b convention); per-cell paired-$t$ pairs explicitly by `(seed)` tuple, only over seeds present in BOTH modes |
+| CR-3 | CRITICAL | `aggregate_g_opd_flash_deployshift.py:111-132` | Δ-pairing relied on `dict` iteration order between `g_pooled[:n]` and `b_pooled[:n]` — any build-order change silently breaks $p$-values | Rewrote with **tuple-keyed `(ds, base, seed, deploy_seed)` pairing**: build per-mode `dict[tuple → Δ]`, take intersection of keys, pair by tuple identity (no longer index-based) |
+| MJ-4 | MAJOR | §3.5 $r^{\text{node}} = r^c \cdot \text{conf}(p^T) \cdot \text{cal}(p^T)$ | $\eta \times r^{\text{node}}$ cancellation: when teacher is uncertain (η→1, forward-KL should activate), $\text{conf}(p^T)\!=\!|2p\!-\!1|\!\to\!0$ zeroes the forward-KL term — the §4.2 mass-covering contribution was **decorative** (multiplied by 0 exactly where it should fire) | **`conf` factor dropped**: $\boxed{r^{\text{node}} = r^c \cdot \text{cal}(p^T)}$. Calibration discount stays (miscalibrated bins still get $r^{\text{node}} \to 0 \Rightarrow \lambda_{\text{bce}} \to 0.55$, BCE anchor takes over). Forward-KL on uncertain-teacher nodes now actually fires |
+| MJ-5 | MAJOR | §3.1 "student-policy" framing | $q_\phi$ in epochs 0–20 is dominated by base-derived signal ($\delta_S\!=\!0$, $p_S\!=\!\sigma(b_i)$ via zero-init head_delta) — "student-policy" is really "base-policy + bounded student perturbation" until heads warm up | Added **early-epoch caveat** to §3.1: "Note: with zero-init `head_delta` (required by Prop. P3 epoch-0 invariant), $q_\phi$ in epochs 0–~20 is dominated by base-derived signal. The student-policy contribution accrues gradually as `head_delta` grows. T5 epoch-trajectory plots of $q_\phi$ entropy will quantify this; if the entropy is flat through epoch 60, the §4.1 contribution claim must be downgraded." P3 invariant is non-negotiable (contract-preservation) so the resolution is honest disclosure, not init perturbation |
+| MJ-6 | MAJOR | §8 ablation matrix arm 5 `opd_action_strict` | REINFORCE arm omitted multi-head matching — **strawman**: if REINFORCE underperforms, can't distinguish "REINFORCE is bad" from "multi-head matching is what helps in g_opd_flash" | Added **6th mode `opd_action_strict_mh`**: REINFORCE + 3-head multi-head matching + BCE anchor; matches g_opd_flash on everything *except* the sampling-gradient mechanism (REINFORCE vs detached GKD). 3-way honest comparison: strict-alone / strict+MH / g_opd_flash |
+| MJ-7 | MAJOR | §4.3 "SHA-256 logged at epoch 0 and 80" | Design promise; v3.1 code only printed once at startup (`train_g_opd_flash.py:866-869`) — no post-training assertion | Added `hashlib.sha256(...)` re-check after `train_g_opd_flash()` returns with `assert pre == post` (`train_g_opd_flash.py` post-training section); aborts run with clear C1-VIOLATED message if base file mutated |
+| MJ-8 | MAJOR | §3.5 + `build_teacher_priors.py:138-164` | $r^c$ and `cal_bins` computed from `data.val_mask` — soft val-leakage: val labels shape training-loss multiplicative weights, and production deployment cannot reproduce this without a val set | **`val_mask` → stratified 20 % train-holdout**: `_eval_teacher_train_holdout` (back-compat alias `_eval_teacher_val` retained) samples `holdout_frac=0.2` of positives + negatives from `train_mask`, deterministic per `seed+7`. Priors are now derivable entirely from training-time-available labels. Production deployment can recompute caches without needing a held-out val set |
+
+### Acceptance status (round-4)
+
+- ✅ **Implementation design**: ACCEPTED with v3.2 patches (T1–T7 may proceed; smoke tests pass — 22/22 unit + 6/6 modes including new `opd_action_strict_mh`).
+- ⏸ **Paper claim lock**: NOT YET — Opus critic verdict was "REJECT for paper claim lock until 3 CRITICAL + 5 MAJOR resolved"; this revision absorbs all 8. Paper-claim lock deferred until T5 + T7 5-seed paired-$t$ evidence + Codex round-5 confirms the corrections + reports remaining open question (P1 alternating-minimisation fixed point, see Opus §1.1).
+- 🔁 **Open question carried to round-5**: §5 Proposition P1 surrogate-vs-true-loss gap (Opus §1.1) is acknowledged but not closed — GKD-style detached sampling glosses over the alternating-minimisation fixed-point question; recommend disclosing this as a "convention from prior work" rather than a proved claim.
 
 ---
 
@@ -138,6 +161,8 @@ Normalise: $q_\phi(i) = \tilde q_\phi(i)\,/\,\sum_{j} \tilde q_\phi(j)$. Default
 
 Intuition: high-entropy nodes (student uncertain), predicted-positive nodes (focus on fraud calls), and large-residual nodes (student is actively intervening) get proportionally more teacher feedback.
 
+**v3.2 MJ-5 early-epoch caveat (Opus round-4).** The Prop. P3 epoch-0 invariant requires zero-init `head_delta`, which means $\delta^S_i \equiv 0$ at epoch 0 and $p^S_i = \sigma(b_i)$ (the base posterior). Until `head_delta` warms up (~20 epochs in our defaults), $q_\phi$ is dominated by base-derived signal ($H_S$ and $p_S$ both functions of $b_i$). The "student-policy" contribution accrues gradually as `head_delta` grows. **T5 will plot $q_\phi$ entropy / KL-divergence-from-base across the 80-epoch trajectory**; if $q_\phi$ stays within 0.05 KL of the base-only distribution through epoch 60, the §4.1 "student-policy" novelty claim must be downgraded to "base-policy with reliability-aware reweighting that becomes student-policy mid-to-late training". P3 zero-init invariant is contract-preservation-critical and cannot be relaxed.
+
 ### 3.2 Phase B — sample $K$ nodes; teacher sparse forward
 
 Sample $\mathcal{B} = \{i_1, \ldots, i_K\}$ without replacement from $q_\phi$ (default $K = \min(2048,\ N_{\mathrm{train}})$). **Detach $q_\phi$** — no gradient flows back through sampling weights (GKD §3 stop-gradient convention).
@@ -179,19 +204,25 @@ $$
 
 ### 3.5 Phase E — node-level reliability + adaptive BCE anchor
 
-**Cross-cell curriculum prior** (Codex I8 normalisation fix): precompute for each cell $c$
+**Cross-cell curriculum prior** (Codex I8 normalisation fix; **v3.2 MJ-8** train-holdout fix): precompute for each cell $c$
 $$
 r^c = \mathrm{clip}\!\left(\frac{\mathrm{AUPRC}^{c}_T - \pi^c}{1 - \pi^c},\ r_{\min},\ 1\right),\qquad r_{\min} = 0.1,
 $$
-where $\pi^c$ is the cell's class prevalence. This is *lift over chance* and is comparable across datasets; cached to `artifacts/teacher_curriculum_prior.json` once per cell.
+where $\pi^c$ is the cell's class prevalence. AUPRC$^{c}_T$ is measured on a **stratified 20 % train-holdout** (v3.2 MJ-8 fix — was val set in v3.1, which created a soft val-leakage path into the training loss); cached to `artifacts/teacher_curriculum_prior.json` once per cell. Production deployments can recompute the cache without needing a held-out val set.
 
-**Node-level reliability** combines cell prior, teacher confidence, and ECE-style calibration-bin reliability:
+**Node-level reliability** (**v3.2 MJ-4 fix** — `conf` factor dropped):
 $$
-r^{\mathrm{node}}_i = r^c \cdot \mathrm{conf}(p^T_i) \cdot \mathrm{cal}_{\mathrm{bin}(p^T_i)},
+\boxed{\;r^{\mathrm{node}}_i = r^c \cdot \mathrm{cal}_{\mathrm{bin}(p^T_i)}\;}
 $$
-where $\mathrm{conf}(p) = |2p - 1|$ and $\mathrm{cal}_b$ is the empirical accuracy in confidence bin $b$ on val (10 equal-width bins).
+where $\mathrm{cal}_b = |2 \cdot \hat\pi_b - 1|$ is a **Bernoulli information-content** scalar — $\hat\pi_b$ is the empirical positive rate in confidence bin $b$ on the train-holdout (10 equal-width bins).  This is **NOT a standard calibration measure**: a well-calibrated bin where positive rate equals the bin midpoint (e.g., midpoint=0.5 → rate=0.5) returns 0.0, not 1.0.  The metric is intentionally chosen to discount distillation in *information-poor* regions of the teacher's prediction space (bins where outcomes are 50/50, hence the teacher's local prediction carries no information).
 
-**Adaptive BCE anchor**:
+**Why the v3.1 $\mathrm{conf}(p^T) = |2p^T-1|$ factor was dropped (Opus round-4 MJ-4) and what v3.2 actually does (Opus round-5 #3 clarification).** v3.1 multiplied $r^{\mathrm{node}}$ by $\mathrm{conf}(p^T)$, which **zeroed the forward-KL term exactly where it was supposed to activate**: teacher uncertain $\Rightarrow \eta = H(p^T)/\log 2 \to 1$ (forward-KL activates) but also $\mathrm{conf}(p^T) \to 0 \Rightarrow r^{\mathrm{node}} \to 0$ — the §4.2 mass-covering contribution was decorative. v3.2 drops $\mathrm{conf}$.
+
+**However**, the v3.2 `cal_bin` formula is itself $|2 \cdot \hat\pi_b - 1|$, which under a *uniformly well-calibrated* teacher (positive rate = bin midpoint) **still discounts the mid-range bins** where forward-KL would otherwise fire. So the v3.2 fix to §4.2 is conditional: **"forward-KL on uncertain-teacher nodes fires only when the teacher is non-trivially miscalibrated in those bins"** (e.g., a bin predicting $\sim$0.5 whose true positive rate is $\sim$0.9 due to label noise or train-holdout domain skew). T5 must report per-cell r_node histograms to validate whether this condition holds empirically.
+
+**Fallback under uniformly well-calibrated teacher (R7 risk register).** If T5 shows $r^{\mathrm{node}}_{\text{mean}} < 0.2$ across most cells (calibration discount kills distillation), G-OPD-Flash collapses to "BCE with mild distillation regularization" because $\lambda_{\mathrm{bce}} \to 0.55$ everywhere. Mitigation options (decide BEFORE T5 if cell-by-cell calibration check warrants): (i) Laplace smoothing on $\hat\pi_b$ to soften the 50/50 discount, (ii) replace `cal_bin` with a true calibration metric (e.g., $1 - \text{ECE}_b$), or (iii) fall back to confidence-only $r^{\mathrm{node}} = r^c \cdot \mathrm{conf}(p^T)$ (the v3.1 formula, accepting the forward-KL cancellation as a known limitation).
+
+**Adaptive BCE anchor** (unchanged from v3.1):
 $$
 \lambda_{\mathrm{bce}}(i) = \lambda_{\min} + (1 - r^{\mathrm{node}}_i)\,\lambda_{\mathrm{extra}},\qquad \lambda_{\min}=0.05,\ \lambda_{\mathrm{extra}}=0.50.
 $$
@@ -236,8 +267,8 @@ for epoch in range(E):
     L_rel   = ((c_S_r - c_T_r) ** 2).mean(dim=-1)
     L_gate  = kl_categorical(g_S, g_T)
 
-    # --- Phase E: node-level reliability + adaptive BCE ---
-    r_node    = r_c * confidence(p_T) * cal_bin_reliability(p_T)
+    # --- Phase E: node-level reliability + adaptive BCE (v3.2 MJ-4) ---
+    r_node    = r_c * cal_bin_reliability(p_T)   # NO conf factor (v3.2)
     lam_bce_i = lam_min + (1 - r_node) * lam_extra
     mask_lab  = is_labelled_train[idx]
     L_bce_per = lam_bce_i * F.binary_cross_entropy_with_logits(
@@ -430,9 +461,9 @@ All three propositions can be stated formally and proved in 2–4 lines each —
 
 ---
 
-## 8. Experiment matrix (8 ablation arms)
+## 8. Experiment matrix (8 ablation arms, **v3.2 expanded** with MJ-6 strict_mh)
 
-Per Codex `gpt-5.5` audit recommendation:
+Per Codex `gpt-5.5` audit + Opus round-4 MJ-6 recommendations:
 
 | # | Mode flag | Description | Defends against reviewer attack |
 |---|---|---|---|
@@ -440,7 +471,8 @@ Per Codex `gpt-5.5` audit recommendation:
 | 2 | `all_node_mh` | multi-head distill, but full-graph (no sampling) | "multi-head alone enough?" |
 | 3 | `det_mask` | v1 deterministic entropy mask (rev-KL final-only) | "stochastic > deterministic mask?" |
 | 4 | **`g_opd_flash`** | full G-OPD-Flash (main method) | — |
-| 5 | `opd_action_strict` | Bernoulli action + REINFORCE | "why not classic OPD-RL?" |
+| 5 | `opd_action_strict` | Bernoulli action + REINFORCE, **no multi-head** | "why not classic OPD-RL?" |
+| 5b | **`opd_action_strict_mh`** (**v3.2 MJ-6**) | REINFORCE + multi-head + BCE anchor | **"is the win from sampling-mechanism or multi-head?"** — isolates the gradient-mechanism difference. 3-way: strict-alone / strict+MH / g_opd_flash |
 | 6 | `g_opd_no_reliability` | $r^{\mathrm{node}} \equiv 1$, $\lambda_{\mathrm{bce}} \equiv 0.05$ | "reliability really matters?" |
 | 7 | `g_opd_final_only` / `+rel` / `+gate` | head ablation (3 sub-arms) | "which head carries the weight?" |
 | 8 | `g_opd_teacher_handcrafted` vs `g_opd_teacher_lree` | teacher swap | **C3 independence from C2** (Codex I13) |
@@ -506,4 +538,4 @@ Per Codex `gpt-5.5` audit recommendation:
 
 ---
 
-*Living document. Any drift during implementation must be reflected back here with a version bump (v3.1, v3.2, …). v1 (`docs/OPD_FLASH_DESIGN.md`) is retained as historical record; v3 supersedes for all future work.*
+*Living document. Any drift during implementation must be reflected back here with a version bump (v3.1, v3.2, …). v1 (`docs/OPD_FLASH_DESIGN.md`) is retained as historical record; v3.2 supersedes for all future work. v3.2 lock 2026-05-19 (Opus round-4 critic — 3 CRITICAL + 5 MAJOR fixes absorbed; paper-claim lock still deferred to T5+T7+Codex round-5).*
