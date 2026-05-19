@@ -29,7 +29,7 @@ TEACHER_RUN_NAME="${1:-idea1_canonical_clsonly_smoke}"
 DATASETS=(yelpchi amazon)
 BASES=(bwgnn sage gcn gat)
 SEEDS=(42 123 456 789 2026)
-MODES=(off_policy all_node_mh det_mask g_opd_flash opd_action_strict opd_action_strict_mh)
+MODES=(det_mask_cbr)
 GPUS=(0 1 2 3)
 N_GPUS=${#GPUS[@]}
 

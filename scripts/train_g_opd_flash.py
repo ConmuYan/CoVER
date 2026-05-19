@@ -91,6 +91,13 @@ SUPPORTED_MODES = (
     "off_policy",
     "all_node_mh",
     "det_mask",
+    "det_mask_mh",
+    "det_mask_no_rel",          # v3.4 ablation: r_node ≡ 1 (no reliability)
+    "det_mask_fixed_bce",       # v3.4 ablation: λ_bce ≡ λ_min (no adaptive anchor)
+    "det_mask_rev_only",        # v3.4 ablation: η ≡ 0 (pure reverse-KL, no mixed)
+    "det_mask_single_denom",    # v3.4 ablation: single Σr_node denominator (no MF4)
+    "det_mask_crd",             # v3.5 Direction A: Camouflage-aware Relation-Disagreement
+    "det_mask_cbr",             # v3.5 Direction G: Contract-Budgeted Residual allocation
     "g_opd_flash",
     "opd_action_strict",
     "opd_action_strict_mh",
@@ -368,11 +375,27 @@ def _compute_distill_terms_on_indices(
     y: torch.Tensor,
     train_mask: torch.Tensor,
     pos_weight: torch.Tensor | None = None,
+    # ── v3.4 per-ingredient ablation flags (Z1 — isolate each Flash-RAER loss
+    # term's marginal value). Defaults keep the canonical Flash-RAER loss. ──
+    ablate_reliability: bool = False,     # if True: r_node ≡ 1 (drops reliability weighting from BOTH distill & λ_bce coupling)
+    ablate_adaptive_bce: bool = False,    # if True: λ_bce_i ≡ λ_min (no adaptive anchor)
+    ablate_mixed_kl: bool = False,        # if True: η ≡ 0 (pure reverse-KL only)
+    ablate_two_denom: bool = False,       # if True: single Σr_node denominator (revert MF4)
+    # ── v3.5 brainstorm additions (Direction A + Direction G) ──
+    crd_alpha: float = 0.0,               # if > 0: enable Camouflage-aware Relation-Disagreement weight w_i = exp(α·std(s_T_per_r))
+    cbr_lambda: float = 0.0,              # if > 0: enable Contract-Budgeted Residual allocation penalty
+    cbr_base_logits: torch.Tensor | None = None,  # base logits for sensitivity proxy (CBR only)
+    cbr_delta_max: float = 2.0,           # δ_max for CBR normalisation
 ) -> tuple[torch.Tensor, dict[str, float], dict[str, torch.Tensor]]:
     """Run Phase C+D+E+F on a set of node indices ``idx`` (the sampled batch
     in g_opd_flash mode, or all train nodes in all_node_mh mode).
 
     Returns (L_total, loss_stats_dict, diagnostic_tensors_dict).
+
+    **v3.4 ablation flags** (Z1): each `ablate_*` switch disables exactly
+    ONE of the five Flash-RAER loss ingredients to isolate its marginal
+    contribution. The flags compose, but the four canonical ablation arms
+    each flip ONE switch and keep all others at default.
     """
     s_out = student(base_z[idx], base_logits[idx], rel_features[idx], return_heads=True)
     p_S = s_out["p"]
@@ -385,44 +408,92 @@ def _compute_distill_terms_on_indices(
     c_T_r = teacher_cache["c_per_r"][idx].to(p_S.device).detach()
     g_T_r = teacher_cache["gate"][idx].to(p_S.device).detach()
 
-    # Phase D: entropy-aware mixed Bernoulli KL
-    eta = bernoulli_entropy(p_T) / math.log(2.0)
+    # Phase D: entropy-aware mixed Bernoulli KL (or rev-only under ablation)
+    if ablate_mixed_kl:
+        # Ablation 3: η ≡ 0, pure reverse-KL (mode-seeking, no mass-covering)
+        eta = torch.zeros_like(p_T)
+    else:
+        eta = bernoulli_entropy(p_T) / math.log(2.0)
     L_logit_per = (1.0 - eta) * bern_kl_rev(p_S, p_T) + eta * bern_kl_fwd(p_S, p_T)
     L_rel_per = ((c_S_r - c_T_r) ** 2).mean(dim=-1)
     L_gate_per = categorical_kl(g_S_r, g_T_r)
 
-    # Phase E: r_node + adaptive λ_bce
-    r_node = rel_helper.r_node(p_T)                            # (K,)
-    lam_bce_i = lambda_min + (1.0 - r_node) * lambda_extra     # (K,)
+    # ── v3.5 Direction A: Camouflage-aware Relation-Disagreement weight ──
+    # If crd_alpha > 0, multiply L_logit_per by exp(α·std(s_T_per_r))
+    # — focuses KL on nodes where teacher's per-relation signals conflict
+    # (camouflage signature: conflicting evidence across relations).
+    crd_weight_mean = 1.0  # for stats
+    if crd_alpha > 0:
+        s_T_per_r_idx = teacher_cache["s_per_r"][idx].to(p_S.device).detach()  # (K, R)
+        # std across R captures both sign disagreement + magnitude variation
+        disagree_i = s_T_per_r_idx.std(dim=-1)  # (K,)
+        crd_weight = torch.exp(crd_alpha * disagree_i).clamp_max(10.0)  # bounded to avoid explosion
+        L_logit_per = L_logit_per * crd_weight
+        crd_weight_mean = float(crd_weight.detach().mean())
+
+    # Phase E: r_node + adaptive λ_bce (ablations 1 & 2)
+    if ablate_reliability:
+        r_node = torch.ones_like(p_T)          # Ablation 1: drop r_node
+    else:
+        r_node = rel_helper.r_node(p_T)
+    if ablate_adaptive_bce:
+        lam_bce_i = torch.full_like(p_T, float(lambda_min))   # Ablation 2: fixed λ_min
+    else:
+        lam_bce_i = lambda_min + (1.0 - r_node) * lambda_extra
     mask_lab = train_mask[idx].to(dtype=p_S.dtype, device=p_S.device)
     y_idx = y[idx].to(dtype=p_S.dtype, device=p_S.device)
 
-    # Phase F: two-term independent-normaliser loss (v3.1 MF4)
+    # Phase F: two-term independent-normaliser loss (v3.1 MF4) OR single-denom (ablation 4)
     distill_per = r_node * (alpha_f * L_logit_per + alpha_r * L_rel_per + alpha_g * L_gate_per)
-    denom_d = r_node.sum().clamp_min(1.0)
-    L_distill = distill_per.sum() / denom_d
-
-    # BCE term: per-node, pos_weight applies multiplicatively to y=1 only.
     bce_per = F.binary_cross_entropy_with_logits(
         s_S_logit, y_idx, reduction="none",
         pos_weight=pos_weight if pos_weight is not None else None,
     )
     bce_weight = lam_bce_i * mask_lab
-    denom_b = bce_weight.sum().clamp_min(1.0)
-    L_bce = (bce_weight * bce_per).sum() / denom_b
+
+    if ablate_two_denom:
+        # Ablation 4: single denominator Σr_node (revert MF4 → v3.0 form)
+        denom = r_node.sum().clamp_min(1.0)
+        L_distill = distill_per.sum() / denom
+        L_bce = (bce_weight * bce_per).sum() / denom
+    else:
+        # Default Flash-RAER: two independent normalisers (MF4)
+        denom_d = r_node.sum().clamp_min(1.0)
+        denom_b = bce_weight.sum().clamp_min(1.0)
+        L_distill = distill_per.sum() / denom_d
+        L_bce = (bce_weight * bce_per).sum() / denom_b
 
     L_total = L_distill + L_bce
 
+    # ── v3.5 Direction G: Contract-Budgeted Residual allocation penalty ──
+    # If cbr_lambda > 0, add penalty on "wasted budget": student's residual
+    # magnitude on nodes where teacher barely intervened (low teacher sensitivity).
+    # sensitivity_i = |teacher_residual| / δ_max ∈ [0, 1]
+    # waste_i = |student_residual| / δ_max · (1 - sensitivity_i)
+    # L_budget = mean(waste_i) — encourages conserving budget where teacher does
+    cbr_loss_val = 0.0
+    if cbr_lambda > 0 and cbr_base_logits is not None:
+        base_idx = cbr_base_logits.detach().view(-1)[idx].to(p_S.device)
+        teacher_logit_idx = teacher_cache["logit"][idx].to(p_S.device).detach()
+        sensitivity = ((teacher_logit_idx - base_idx).abs() / float(cbr_delta_max)).clamp(0.0, 1.0)
+        student_delta = (s_S_logit - base_idx).abs() / float(cbr_delta_max)
+        waste = student_delta * (1.0 - sensitivity)
+        L_budget = waste.mean()
+        L_total = L_total + cbr_lambda * L_budget
+        cbr_loss_val = float(L_budget.detach())
+
     stats = {
-        "l_logit": float((L_logit_per.detach() * r_node.detach()).sum() / denom_d.detach()),
-        "l_rel": float((L_rel_per.detach() * r_node.detach()).sum() / denom_d.detach()),
-        "l_gate": float((L_gate_per.detach() * r_node.detach()).sum() / denom_d.detach()),
+        "l_logit": float((L_logit_per.detach() * r_node.detach()).sum() / r_node.sum().clamp_min(1.0).detach()),
+        "l_rel": float((L_rel_per.detach() * r_node.detach()).sum() / r_node.sum().clamp_min(1.0).detach()),
+        "l_gate": float((L_gate_per.detach() * r_node.detach()).sum() / r_node.sum().clamp_min(1.0).detach()),
         "l_distill": float(L_distill.detach()),
         "l_bce": float(L_bce.detach()),
         "total": float(L_total.detach()),
         "lam_bce_mean": float(lam_bce_i.detach().mean()),
         "r_node_mean": float(r_node.detach().mean()),
         "batch_size": int(idx.numel()),
+        "crd_weight_mean": crd_weight_mean,
+        "cbr_loss": cbr_loss_val,
     }
     diag = {
         "r_node": r_node.detach(),
@@ -731,6 +802,8 @@ def train_g_opd_flash(
             )
         elif mode == "det_mask":
             # v1 deterministic entropy mask: top-K train nodes by H(p^S).
+            # **final-only** (alpha_r=alpha_g=0) — the v1 baseline arm that
+            # paired-t falsified `g_opd_flash` (Critic round-7).
             with torch.no_grad():
                 s_out = student(base_z, base_logits, rel_features, return_heads=False)
                 p_S = torch.sigmoid(s_out["final_logit"])
@@ -742,9 +815,109 @@ def train_g_opd_flash(
                 student=student, teacher_cache=teacher_cache,
                 base_z=base_z, base_logits=base_logits, rel_features=rel_features,
                 idx=topk, rel_helper=rel_helper,
-                alpha_f=alpha_f, alpha_r=0.0, alpha_g=0.0,  # final-only per design
+                alpha_f=alpha_f, alpha_r=0.0, alpha_g=0.0,  # final-only per v1 design
                 lambda_min=lambda_min, lambda_extra=lambda_extra,
                 y=y, train_mask=train_mask, pos_weight=pos_weight,
+            )
+        elif mode == "det_mask_mh":
+            # **Critic round-8 Q3 follow-up arm**: det_mask + multi-head
+            # (alpha_r/alpha_g at default 0.3/0.2).  Tests whether the
+            # multi-head matching that g_opd_flash uses adds value when
+            # combined with the v1 deterministic top-entropy mask (which
+            # already paired-t beat g_opd_flash on T5).  Closes the central
+            # ablation question for v3.3 Flash-RAER framing.
+            with torch.no_grad():
+                s_out = student(base_z, base_logits, rel_features, return_heads=False)
+                p_S = torch.sigmoid(s_out["final_logit"])
+                H_S = bernoulli_entropy(p_S)
+                H_train = H_S.clone()
+                H_train[~train_mask] = -float("inf")
+                topk = torch.topk(H_train, K_eff).indices
+            loss, stats, _ = _compute_distill_terms_on_indices(
+                student=student, teacher_cache=teacher_cache,
+                base_z=base_z, base_logits=base_logits, rel_features=rel_features,
+                idx=topk, rel_helper=rel_helper,
+                alpha_f=alpha_f, alpha_r=alpha_r, alpha_g=alpha_g,  # full 3-head
+                lambda_min=lambda_min, lambda_extra=lambda_extra,
+                y=y, train_mask=train_mask, pos_weight=pos_weight,
+            )
+        elif mode.startswith("det_mask_") and mode in (
+            "det_mask_no_rel", "det_mask_fixed_bce",
+            "det_mask_rev_only", "det_mask_single_denom",
+        ):
+            # v3.4 ablation arms (Z1): each toggles ONE Flash-RAER loss
+            # ingredient OFF to isolate its marginal value.  All arms use
+            # det_mask (top-K) + final-only (alpha_r=alpha_g=0) baseline,
+            # so isolation is clean.
+            with torch.no_grad():
+                s_out = student(base_z, base_logits, rel_features, return_heads=False)
+                p_S = torch.sigmoid(s_out["final_logit"])
+                H_S = bernoulli_entropy(p_S)
+                H_train = H_S.clone()
+                H_train[~train_mask] = -float("inf")
+                topk = torch.topk(H_train, K_eff).indices
+            ablate_kwargs = {
+                "det_mask_no_rel": {"ablate_reliability": True},
+                "det_mask_fixed_bce": {"ablate_adaptive_bce": True},
+                "det_mask_rev_only": {"ablate_mixed_kl": True},
+                "det_mask_single_denom": {"ablate_two_denom": True},
+            }[mode]
+            loss, stats, _ = _compute_distill_terms_on_indices(
+                student=student, teacher_cache=teacher_cache,
+                base_z=base_z, base_logits=base_logits, rel_features=rel_features,
+                idx=topk, rel_helper=rel_helper,
+                alpha_f=alpha_f, alpha_r=0.0, alpha_g=0.0,  # final-only baseline
+                lambda_min=lambda_min, lambda_extra=lambda_extra,
+                y=y, train_mask=train_mask, pos_weight=pos_weight,
+                **ablate_kwargs,
+            )
+        elif mode == "det_mask_crd":
+            # v3.5 Direction A — Camouflage-aware Relation-Disagreement
+            # weighting on top of det_mask (top-K) + final-only.  Uses
+            # teacher's per-relation scalar `s_per_r` directly: high std
+            # across R relations indicates camouflage (conflicting signals).
+            # Per-node weight w_i = exp(alpha · std(s_T_per_r)) multiplies
+            # the KL term to focus on camouflaged nodes.
+            with torch.no_grad():
+                s_out = student(base_z, base_logits, rel_features, return_heads=False)
+                p_S = torch.sigmoid(s_out["final_logit"])
+                H_S = bernoulli_entropy(p_S)
+                H_train = H_S.clone()
+                H_train[~train_mask] = -float("inf")
+                topk = torch.topk(H_train, K_eff).indices
+            loss, stats, _ = _compute_distill_terms_on_indices(
+                student=student, teacher_cache=teacher_cache,
+                base_z=base_z, base_logits=base_logits, rel_features=rel_features,
+                idx=topk, rel_helper=rel_helper,
+                alpha_f=alpha_f, alpha_r=0.0, alpha_g=0.0,  # final-only
+                lambda_min=lambda_min, lambda_extra=lambda_extra,
+                y=y, train_mask=train_mask, pos_weight=pos_weight,
+                crd_alpha=float(distill_cfg.get("crd_alpha", 1.0)),  # camouflage weight strength
+            )
+        elif mode == "det_mask_cbr":
+            # v3.5 Direction G — Contract-Budgeted Residual allocation on
+            # top of det_mask (top-K) + final-only.  Treats the δ-bounded
+            # contract as a learning signal: encourage student to spend
+            # budget on nodes where teacher needs intervention (high
+            # |teacher_residual|), conserve on nodes where teacher barely
+            # intervened (base already correct).
+            with torch.no_grad():
+                s_out = student(base_z, base_logits, rel_features, return_heads=False)
+                p_S = torch.sigmoid(s_out["final_logit"])
+                H_S = bernoulli_entropy(p_S)
+                H_train = H_S.clone()
+                H_train[~train_mask] = -float("inf")
+                topk = torch.topk(H_train, K_eff).indices
+            loss, stats, _ = _compute_distill_terms_on_indices(
+                student=student, teacher_cache=teacher_cache,
+                base_z=base_z, base_logits=base_logits, rel_features=rel_features,
+                idx=topk, rel_helper=rel_helper,
+                alpha_f=alpha_f, alpha_r=0.0, alpha_g=0.0,  # final-only
+                lambda_min=lambda_min, lambda_extra=lambda_extra,
+                y=y, train_mask=train_mask, pos_weight=pos_weight,
+                cbr_lambda=float(distill_cfg.get("cbr_lambda", 0.5)),  # budget penalty strength
+                cbr_base_logits=base_logits,  # for sensitivity computation
+                cbr_delta_max=student.delta_max,
             )
         elif mode == "g_opd_flash":
             # Phase A: build q_φ
@@ -922,6 +1095,10 @@ def parse_args() -> argparse.Namespace:
                    help="Off-policy v1: λ_distill on MSE(Δ_φ, Δ_T).")
     p.add_argument("--gamma_kl_v1", type=float, default=0.5,
                    help="Off-policy v1: γ_kl on gate KL.")
+    p.add_argument("--crd_alpha", type=float, default=1.0,
+                   help="v3.5 Direction A: camouflage disagreement weight strength")
+    p.add_argument("--cbr_lambda", type=float, default=0.5,
+                   help="v3.5 Direction G: contract-budgeted residual penalty strength")
 
     # T4 curriculum prior & calibration bins (optional — fallback if absent)
     p.add_argument("--curriculum_prior_path", type=str,
@@ -1089,6 +1266,7 @@ def main() -> None:
         "lambda_min": args.lambda_min, "lambda_extra": args.lambda_extra,
         "lambda_distill_v1": args.lambda_distill_v1, "gamma_kl_v1": args.gamma_kl_v1,
         "grad_clip": args.grad_clip,
+        "crd_alpha": args.crd_alpha, "cbr_lambda": args.cbr_lambda,
     }
     t0 = time.time()
     train_summary, rows = train_g_opd_flash(

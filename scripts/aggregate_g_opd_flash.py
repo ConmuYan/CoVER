@@ -42,7 +42,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 DATASETS = ("yelpchi", "amazon")
 BASES = ("bwgnn", "sage", "gcn", "gat")
 SEEDS = (42, 123, 456, 789, 2026)
-MODES = ("off_policy", "all_node_mh", "det_mask", "g_opd_flash", "opd_action_strict", "opd_action_strict_mh")
+MODES = (
+    "off_policy", "all_node_mh", "det_mask", "det_mask_mh",
+    "det_mask_no_rel", "det_mask_fixed_bce", "det_mask_rev_only", "det_mask_single_denom",
+    "det_mask_crd", "det_mask_cbr",
+    "g_opd_flash", "opd_action_strict", "opd_action_strict_mh",
+)
 DEFAULT_BASELINE_MODE = "off_policy"
 
 
