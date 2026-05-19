@@ -11,7 +11,7 @@
 
 We propose **G-OPD-Flash**, a *graph* on-policy distillation framework for contract-preserving lightweight RAER/LREE student adapters. Unlike LLM-OPD where the policy is over autoregressive token trajectories, G-OPD-Flash defines the policy **over student-selected node states**: each epoch the student induces a sampling distribution $q_\phi(i)$ over training nodes from its own posterior entropy, predicted-fraud probability, and residual magnitude; we draw a mini-batch from $q_\phi$ (gradient detached, GKD-style) and query the frozen teacher only on these student-selected nodes. The distillation loss is a **scalar Bernoulli entropy-aware mixed KL** (reverse-KL when teacher is confident, forward-KL when teacher is uncertain) over three auxiliary heads (final logit, per-relation contribution $c_r = g_r s_r$, gate $g_r$), summed and normalised by selected-node weight mass, with a **node-level reliability weight** and **adaptive BCE anchor** that takes over when teacher reliability is low.
 
-**Targets** (5-seed paired-$t$ falsifiable, NOT proven achievements): $\geq 95\,\%$ AUPRC capture of the LREE teacher at $\geq 2.59\times$ inference speed-up under the four hard contracts of [§1 Operating Principles](../AGENTS.md#1-operating-principles): base-freeze SHA-256, score-blind input, train-only prototype, $\delta$-bounded residual.
+**Targets** (5-seed paired-$t$ falsifiable, NOT proven achievements): $\geq 95\,\%$ AUPRC capture of the LREE teacher at $\geq 2.59\times$ inference speed-up under the four hard contracts of [§1 Problem formulation](../AGENTS.md#1-problem-formulation): base-freeze SHA-256, score-blind input, train-only prototype, $\delta$-bounded residual.
 
 ---
 
@@ -19,7 +19,7 @@ We propose **G-OPD-Flash**, a *graph* on-policy distillation framework for contr
 
 | # | v1 | v3 | Trigger |
 |---|---|---|---|
-| R1 | "first OPD for GAD" | **"first graph on-policy distillation: policy over student-selected node states, not token prefixes"** | Codex I1 FATAL + Opus Q1 + Q7 |
+| R1 | "first OPD for GAD" | **"first contract-preserving student-policy node-state distillation framework for graph fraud detection / RAER adapters"** (v3.1 round-3 MF5 narrowing — boundary against FreeKD KDD'22 graph RL-KD, LLM-OPD/GKD ICLR'24) | Codex I1 FATAL + Opus Q1 + Q7 + round-3 MF5 |
 | R2 | deterministic entropy mask | **stochastic student-policy node sampling** $i \sim q_\phi$ (detached, GKD-style) | Codex I1 FATAL + counter-example CE-2 |
 | R3 | 2-class softmax reverse-KL | **scalar Bernoulli mixed KL** $(1-\eta) \mathrm{KL}_{\mathrm{rev}} + \eta\,\mathrm{KL}_{\mathrm{fwd}}$ | Codex I2 CRITICAL + entropy-aware OPD lit |
 | R4 | `.mean()` over all $N$ nodes | $\sum_i w_i \mathcal{L}_i / \max(\sum_i w_i, 1)$ over selected nodes | Codex I4 CRITICAL |
@@ -32,6 +32,29 @@ We propose **G-OPD-Flash**, a *graph* on-policy distillation framework for contr
 | R11 | "achieves $\geq 95\,\%$ capture" | **"targets $\geq 95\,\%$ capture (5-seed paired-$t$ falsifiable)"** | Codex I6 CRITICAL + Opus Q8 |
 | R12 | T1–T6 (5–6 GPU days) | **T1–T7 (9–10 GPU days)**: adds `strict-OPD` ablation mode (T6) + deployment-shift eval (T7) | Codex experiment-matrix + Opus Q6 |
 | R13 | name `OPD-Flash` | **`G-OPD-Flash`** (graph-level OPD, paper-title friendly) | Codex naming recommendation |
+
+---
+
+## 0.2 v3 → v3.1 revision log (Codex round-3 conditional-accept)
+
+Codex `gpt-5.5` xhigh round-3 review verdict: v3 **accepted as implementation design**, **not yet accepted as paper claim** — 5 must-fix + 4 minor required before claim lock. v3.1 absorbs all 9:
+
+| # | Severity | Site (v3) | v3 wording / formula | v3.1 fix |
+|---|---|---|---|---|
+| MF1 | MUST | §5 P1 | "$\nabla_\phi \hat{\mathcal{L}}$ unbiased w.r.t. $\nabla_\phi \mathcal{L}^*$" | Rewritten as unbiased w.r.t. $\nabla_\phi \mathcal{L}_{\mathrm{sg}}(\phi; \bar q)$ (surrogate, detached); explicit decomposition exposes the dropped score-function term |
+| MF2 | MUST | §5 P2 | $\gamma_T = \min$ teacher margin; "low-margin set $\{ s^T_i - s^T_j < \gamma_T\}$" basically empty by definition | Reformulated with arbitrary $\epsilon > 0$; high-margin set $\mathcal{H}_{2\epsilon} = \{|s^T_i - s^T_j| > 2\epsilon\}$ has student ranking preserved iff $\sup|s^S - s^T| < \epsilon$; closed-form AUPRC bound dropped (MF2 forbids it) |
+| MF3 | MUST | §3.2 | "saves $\sim 70\,\%$ teacher FLOPs vs full-graph" | Replaced: "head-level computation on sampled nodes is sparse; full speed-up depends on cached teacher heads / LREE evidence and must be benchmarked in T5" |
+| MF4 | MUST | §3.6 | single denominator $\sum r^{\mathrm{node}}_i$ for distill+BCE | Two independent normalisers: $\mathcal{L}_{\mathrm{distill}}/\sum r^{\mathrm{node}}_i \;+\; \mathcal{L}_{\mathrm{bce}}/\sum \lambda_{\mathrm{bce}}\mathbb{1}[y \in \mathrm{train}]$ (BCE scale invariant when $r^{\mathrm{node}}$ uniformly small) |
+| MF5 | MUST | §0 TL;DR / §0.1 R1 / §12 paper claim | "first graph on-policy distillation" | Narrowed to **"first contract-preserving student-policy node-state distillation framework for graph fraud detection / RAER adapters"**; explicit boundary against FreeKD (KDD'22 RL-KD) and LLM-OPD (GKD ICLR'24) |
+| m1 | minor | §3.3 final-head input, §4.3 C2 row | $\overline{e_i}$ / $\overline{e_{i,\cdot}}$ ambiguous (reads as mean across relations) | Explicit concatenation: $[z_i;\,e_{i,1};\,\ldots;\,e_{i,R}]$ |
+| m2 | minor | T6 purpose (§6) | "establishes that detached sampling beats REINFORCE" | "**tests whether** detached sampling outperforms REINFORCE" — no pre-supposed result |
+| m3 | minor | §1.2, §10 ref 1 | "Agarwal et al. (NeurIPS 2024) GKD" | "Agarwal et al. (**ICLR 2024**) GKD" — correct venue |
+| m4 | minor | TL;DR line 14, §4.3 contract intro | anchor `#1-operating-principles` + label "Operating Principles" | corrected to `#1-problem-formulation` + label "Problem formulation" (AGENTS.md §1 actual title) |
+
+### Acceptance status (round-3)
+
+- ✅ **Implementation design**: ACCEPTED — T1–T7 may proceed.
+- ⏸ **Paper claim lock**: NOT YET — defer until T5 + T7 5-seed paired-$t$ evidence confirms (or falsifies) targets. The narrowed "first contract-preserving …" framing is the new safety boundary; if T5 falsifies $\geq 95\,\%$ capture target, retreat further to **Flash-RAER** (Codex `Option A` retreat path, `docs/TKDE_COMPLETED_CONTRIBUTIONS.md`).
 
 ---
 
@@ -51,7 +74,7 @@ evaluated on the **fixed** training graph using teacher-generated soft labels. T
 
 ### 1.2 Why naive LLM-OPD does not transfer
 
-LLM-OPD (Agarwal et al. NeurIPS'24 GKD; Gu et al. ICML'24 minILM; Thinking Machines Lab 2025-10) sets the policy over **autoregressive token trajectories**: $\pi_\phi(y_t \mid x, y_{<t})$. The training distribution shifts each epoch because the student samples its own next tokens; teacher provides token-level feedback on those samples. This depends on:
+LLM-OPD (Agarwal et al. ICLR 2024 GKD; Gu et al. ICML 2024 minILM; Thinking Machines Lab 2025-10) sets the policy over **autoregressive token trajectories**: $\pi_\phi(y_t \mid x, y_{<t})$. The training distribution shifts each epoch because the student samples its own next tokens; teacher provides token-level feedback on those samples. This depends on:
 
 - (i) a **multi-step** action space generating non-trivial trajectory variation;
 - (ii) **exposure bias** between teacher-forcing training and free-running inference.
@@ -119,7 +142,7 @@ Intuition: high-entropy nodes (student uncertain), predicted-positive nodes (foc
 
 Sample $\mathcal{B} = \{i_1, \ldots, i_K\}$ without replacement from $q_\phi$ (default $K = \min(2048,\ N_{\mathrm{train}})$). **Detach $q_\phi$** — no gradient flows back through sampling weights (GKD §3 stop-gradient convention).
 
-Teacher forward only on $\mathcal{B}$ (saves $\sim 70\,\%$ of teacher FLOPs vs full-graph):
+Teacher forward only on $\mathcal{B}$ (head-level computation on sampled nodes is sparse; **full inference speed-up depends on caching teacher heads or LREE evidence and must be benchmarked in T5** — without caching, LREE forward still requires full-graph sparse mm and the per-epoch saving will be smaller than naively expected; Codex round-3 MF3):
 $$
 \{s^T_i,\ \{s^T_{i,r}\}_{r=1}^R,\ g^T_i\}_{i \in \mathcal{B}} \;\leftarrow\; T_\theta\!\left(z, \{\phi_{i,r}\}\,\text{or}\,\{e_{i,r}\}\right).
 $$
@@ -129,7 +152,7 @@ Derive $p^T_i = \sigma(s^T_i)$ and per-relation contributions $c^T_{i,r} = g^T_{
 
 The student adapter, **enabled with `return_heads=True`**, returns three quantities on $\mathcal{B}$:
 
-1. **Final scalar logit head**: $s^S_i = b_i + \delta_{\max} \tanh(W_\delta [z_i, \overline{e_i}])$ where $W_\delta$ is zero-initialised (bounded + zero-init contracts).
+1. **Final scalar logit head**: $s^S_i = b_i + \delta_{\max} \tanh\!\big(W_\delta\,[z_i;\,e_{i,1};\,\ldots;\,e_{i,R}]\big)$ — input is the **concatenation** of base embedding with all $R$ relation evidence vectors (not a mean across relations — Codex round-3 minor 1); $W_\delta$ is zero-initialised (bounded + zero-init contracts).
 2. **Per-relation contribution head**: $c^S_{i,r} = g^S_{i,r} s^S_{i,r}$ with $g^S, s^S$ produced by tiny dedicated heads ($\leq 300$ params each).
 3. **Gate head**: $g^S_{i,\cdot}$ already produced as a byproduct of head (2).
 
@@ -178,10 +201,12 @@ When teacher is unreliable on a node, $\lambda_{\mathrm{bce}}$ rises toward $0.5
 
 $$
 \boxed{\;
-\mathcal{L} \;=\; \frac{\sum_{i \in \mathcal{B}} r^{\mathrm{node}}_i \cdot \big(\alpha_f \mathcal{L}^{\mathrm{logit}}_i + \alpha_r \mathcal{L}^{\mathrm{rel}}_i + \alpha_g \mathcal{L}^{\mathrm{gate}}_i\big) \;+\; \sum_{i \in \mathcal{B}} \lambda_{\mathrm{bce}}(i)\cdot \mathrm{BCE}(s^S_i, y_i \mid y_i \in \mathrm{train})}{\max\!\big(\sum_{i \in \mathcal{B}} r^{\mathrm{node}}_i,\ 1\big)}
+\mathcal{L} \;=\; \underbrace{\frac{\sum_{i \in \mathcal{B}} r^{\mathrm{node}}_i \cdot \big(\alpha_f \mathcal{L}^{\mathrm{logit}}_i + \alpha_r \mathcal{L}^{\mathrm{rel}}_i + \alpha_g \mathcal{L}^{\mathrm{gate}}_i\big)}{\max\!\big(\sum_{i \in \mathcal{B}} r^{\mathrm{node}}_i,\ 1\big)}}_{\mathcal{L}_{\mathrm{distill}}}
+\;+\;
+\underbrace{\frac{\sum_{i \in \mathcal{B}} \lambda_{\mathrm{bce}}(i)\cdot \mathrm{BCE}(s^S_i,\, y_i)\cdot \mathbb{1}[y_i \in \mathrm{train}]}{\max\!\big(\sum_{i \in \mathcal{B}} \lambda_{\mathrm{bce}}(i)\cdot \mathbb{1}[y_i \in \mathrm{train}],\ 1\big)}}_{\mathcal{L}_{\mathrm{bce}}}
 \;}
 $$
-**Normaliser is the selected-node weight mass**, not full $N$ — fixes Codex I4 (objective scale invariant to $|\mathcal{B}|$). Defaults $\alpha_f = 1.0,\ \alpha_r = 0.3,\ \alpha_g = 0.2$.
+**Two independent normalisers** (Codex round-3 MF4 fix): the distillation term is normalised by the selected-node reliability mass $\sum r^{\mathrm{node}}_i$; the BCE term is independently normalised by the labelled-train weight mass $\sum \lambda_{\mathrm{bce}}(i)\mathbb{1}[y_i \in \mathrm{train}]$. This prevents the BCE term from being inflated relative to distillation when $r^{\mathrm{node}}$ is uniformly small (e.g. on an unreliable cell where $\lambda_{\mathrm{bce}} \to 0.55$ would otherwise dominate after sharing a $\sum r^{\mathrm{node}}_i$ denominator). Each term's scale stays invariant to $|\mathcal{B}|$ (Codex round-2 I4 preserved). Defaults $\alpha_f = 1.0,\ \alpha_r = 0.3,\ \alpha_g = 0.2$.
 
 ### 3.7 Per-epoch pseudocode
 
@@ -219,10 +244,12 @@ for epoch in range(E):
         s_out["logit"], y[idx].float(), reduction="none")
     L_bce_per = L_bce_per * mask_lab.float()
 
-    # --- Phase F: sum-normalised total loss ---
-    L_distill = r_node * (alpha_f*L_logit + alpha_r*L_rel + alpha_g*L_gate)
-    denom     = r_node.sum().clamp_min(1.0)
-    L_total   = (L_distill.sum() + L_bce_per.sum()) / denom
+    # --- Phase F: two-term independent-normaliser loss (v3.1 MF4) ---
+    L_distill_per = r_node * (alpha_f*L_logit + alpha_r*L_rel + alpha_g*L_gate)
+    bce_weight    = lam_bce_i * mask_lab.float()
+    denom_d       = r_node.sum().clamp_min(1.0)
+    denom_b       = bce_weight.sum().clamp_min(1.0)
+    L_total       = L_distill_per.sum() / denom_d + L_bce_per.sum() / denom_b
 
     L_total.backward()
     optimizer.step()
@@ -262,12 +289,12 @@ This is consistent with the `Entropy-Aware OPD (arXiv 2603.07079)` empirical rec
 
 ### 4.3 Contract-preserving rollouts under four hard contracts
 
-The student's sampling, forward, and loss MUST respect all four `AGENTS.md §1` Operating Principles contracts during every epoch (not just at deployment):
+The student's sampling, forward, and loss MUST respect all four `AGENTS.md §1 Problem formulation` contracts during every epoch (not just at deployment):
 
 | Contract | Where enforced in G-OPD-Flash |
 |---|---|
 | **C1 base-freeze SHA-256** | base detector parameters never updated; SHA-256 hash logged at epoch 0 and 80; assertion failure aborts run |
-| **C2 score-blind input** | student head takes only $[z_i, \overline{\phi_{i,\cdot}}]$ OR $[z_i, \overline{e_{i,\cdot}}]$; $b_i$ added *outside* the head as $s^S_i = b_i + \delta_{\max}\tanh(\cdot)$; static analysis pass in `tests/test_opd_flash_contracts.py` rejects any read of `b_i` inside `S_\phi.forward` |
+| **C2 score-blind input** | student head takes only $[z_i;\,\phi_{i,1};\,\ldots;\,\phi_{i,R}]$ OR $[z_i;\,e_{i,1};\,\ldots;\,e_{i,R}]$ (**concatenation across relations, NOT a mean** — Codex round-3 minor 1); $b_i$ added *outside* the head as $s^S_i = b_i + \delta_{\max}\tanh(\cdot)$; static analysis pass in `tests/test_opd_flash_contracts.py` rejects any read of `b_i` inside `S_\phi.forward` |
 | **C3 train-only prototype** | prototype tensors (if used by teacher) computed exclusively from labelled train indices; teacher forward asserted train-only at construction time |
 | **C4 $\delta$-bounded residual** | $\delta^S_i = \delta_{\max} \tanh(\cdot) \in [-\delta_{\max}, \delta_{\max}]$ by architecture, not by post-hoc clipping |
 
@@ -294,23 +321,25 @@ Justification for retaining all three: they enable downstream interpretability (
 
 ### Proposition P1 — Unbiased sampled objective (proof sketch in TKDE §5.1)
 
-Let $\mathcal{L}^*(\phi) = \mathbb{E}_{i \sim q_\phi}[\ell(\phi; i)]$ be the true G-OPD population risk, where $\ell$ is the per-node distillation+BCE term. Then the mini-batch estimator
+Let $\bar q = \mathrm{sg}(q_\phi)$ denote the stop-gradient (detached) sampling distribution induced by the *current* student parameters $\phi$, treated as a fixed measure for the purpose of differentiation. Define the **surrogate population risk** as
 $$
-\hat{\mathcal{L}}(\phi) \;=\; \frac{1}{K}\sum_{i_k \sim q_\phi}\ell(\phi; i_k)
+\mathcal{L}_{\mathrm{sg}}(\phi;\,\bar q) \;=\; \mathbb{E}_{i \sim \bar q}\big[\ell(\phi; i)\big],
 $$
-satisfies $\mathbb{E}_{i_k \sim q_\phi}[\hat{\mathcal{L}}] = \mathcal{L}^*(\phi)$ **conditioned on the detached sampling distribution**. Sampling-induced score-function gradients are zero (stop-gradient by construction), so $\nabla_\phi \hat{\mathcal{L}}$ is unbiased w.r.t. $\nabla_\phi \mathcal{L}^*$. (This matches GKD §3 Proposition 1.)
+where $\ell$ is the per-node distillation+BCE term. The mini-batch estimator $\hat{\mathcal{L}}(\phi) = K^{-1}\sum_{i_k \sim \bar q}\ell(\phi; i_k)$ satisfies $\mathbb{E}_{i_k \sim \bar q}[\hat{\mathcal{L}}] = \mathcal{L}_{\mathrm{sg}}(\phi;\bar q)$ exactly, and consequently $\nabla_\phi \hat{\mathcal{L}}$ is an unbiased estimator of $\nabla_\phi \mathcal{L}_{\mathrm{sg}}(\phi;\bar q)$ — the *surrogate* gradient, **NOT** the total derivative
+$$
+\nabla_\phi^{\mathrm{tot}} \mathcal{L}^*(\phi) \;=\; \underbrace{\nabla_\phi \mathcal{L}_{\mathrm{sg}}(\phi;q_\phi)}_{\text{the part we estimate}} \;+\; \underbrace{\mathbb{E}_{i\sim q_\phi}\!\!\left[\ell(\phi;i)\,\nabla_\phi \log q_\phi(i)\right]}_{\text{score-function term, dropped by stop-gradient}}.
+$$
+**Codex round-3 MF1 clarification.** G-OPD-Flash *intentionally* drops the score-function term à la GKD §3 (Agarwal et al. ICLR 2024) and Gu et al. (ICML 2024 minILM); the resulting gradient is unbiased w.r.t. $\nabla_\phi \mathcal{L}_{\mathrm{sg}}$, not $\nabla_\phi^{\mathrm{tot}} \mathcal{L}^*$. This is the standard on-policy-distillation convention — trading completeness of the gradient for low variance, justified empirically because $\partial q_\phi/\partial \phi$ is high-variance and small-magnitude on detached node-sampling weights.
 
 ### Proposition P2 — Ranking-stability lemma (proof in TKDE §5.2)
 
-Let $\mathcal{P} \subset \mathrm{train}$ be positive nodes and $\mathcal{N}$ be negatives. Define teacher margin
+Let $\mathcal{P} \subset \mathrm{train}$ be positive nodes and $\mathcal{N}$ be negatives. Fix any student logit-error tolerance $\epsilon > 0$ and define the **high-margin pair set** at threshold $2\epsilon$:
 $$
-\gamma_T = \min_{(i,j) \in \mathcal{P}\times\mathcal{N},\ s^T_i > s^T_j}\big(s^T_i - s^T_j\big).
+\mathcal{H}_{2\epsilon} \;=\; \big\{ (i,j) \in \mathcal{P}\times\mathcal{N} : \big|s^T_i - s^T_j\big| > 2\epsilon \big\}.
 $$
-If $\sup_i |s^S_i - s^T_i| < \gamma_T / 2$, then for every $(i, j) \in \mathcal{P} \times \mathcal{N}$ with $s^T_i > s^T_j$, we also have $s^S_i > s^S_j$; equivalently, the student-induced ranking on $\mathcal{P} \times \mathcal{N}$ matches teacher's. Hence
-$$
-\mathrm{AUPRC}(s^S) \;\geq\; \mathrm{AUPRC}(s^T) \;-\; \mathrm{drop}(\gamma_T, \mathcal{P}\times\mathcal{N}\setminus \mathcal{M}),
-$$
-where the residual drop is bounded by the mass of low-margin pairs $|\mathcal{M}| = \{(i,j) : s^T_i - s^T_j < \gamma_T\}$. **Margin-conditional**, not unconditional — directly responds to CE-1.
+**Claim.** If $\sup_i |s^S_i - s^T_i| < \epsilon$, then for every pair $(i, j) \in \mathcal{H}_{2\epsilon}$ the student preserves the teacher's ordering: $\mathrm{sign}(s^S_i - s^S_j) = \mathrm{sign}(s^T_i - s^T_j)$. Equivalently, **any AUPRC degradation can only originate from low-margin pairs** $(i,j) \notin \mathcal{H}_{2\epsilon}$ — the pair set whose teacher score gap is at most $2\epsilon$.
+
+**Scope clarification (Codex round-3 MF2).** This is a per-pair ranking-stability statement, **not** a closed-form AUPRC lower bound: there is no general translation from per-pair preservation to a closed AUPRC delta without integrating the full precision-recall curve under the empirical positive/negative density. The lemma is what we need for the §6 experimental claim: empirically, the cumulative low-margin pair mass on YelpChi/Amazon teachers is small (to be measured in T5), so AUPRC capture *should* be high — but the capture rate itself is a **targeted hypothesis** (§7), not a theorem-implied lower bound. Margin-conditional, directly responds to CE-1.
 
 ### Proposition P3 — Contract preservation (proof by static-analysis pass)
 
@@ -368,7 +397,7 @@ All three propositions can be stated formally and proved in 2–4 lines each —
   - Sample $y_i \sim \mathrm{Bernoulli}(p^S_i)$ per node $i \in \mathcal{B}$.
   - Reward $r_i = \log p^T_i(y_i \mid \cdot)$; baseline $\hat b = \bar r$ over batch.
   - Policy loss: $-\sum_i (r_i - \hat b)\log p^S_i(y_i)$.
-- Purpose: reviewer-defence ablation — establishes that GKD-style detached sampling beats high-variance single-step REINFORCE in GFD, as predicted by Codex.
+- Purpose: reviewer-defence ablation — **tests whether** GKD-style detached sampling outperforms high-variance single-step REINFORCE in GFD (do not pre-suppose the result — the strict-OPD arm exists precisely so the 5-seed paired-$t$ verdict is in the record).
 
 ### T7 — Deployment-shift evaluation ($\sim$0.5–1 day)
 
@@ -437,7 +466,7 @@ Per Codex `gpt-5.5` audit recommendation:
 
 ## 10. Reference reading (priority order)
 
-1. **Agarwal et al. (NeurIPS 2024) GKD** — On-policy KD for LLMs; §3 detached sampling = G-OPD-Flash mechanism. https://proceedings.iclr.cc/paper_files/paper/2024/file/5be69a584901a26c521c2b51e40a4c20-Paper-Conference.pdf
+1. **Agarwal et al. (ICLR 2024) GKD** — On-policy KD for LLMs; §3 detached sampling = G-OPD-Flash mechanism. https://proceedings.iclr.cc/paper_files/paper/2024/file/5be69a584901a26c521c2b51e40a4c20-Paper-Conference.pdf
 2. **OPD survey arXiv 2604.00626 (2026)** — landscape; G-OPD-Flash positioned as graph-state-policy variant. https://arxiv.org/abs/2604.00626
 3. **Thinking Machines Lab blog (2025-10)** — engineering recipe; informs convergence-epoch hypothesis.
 4. **Entropy-Aware OPD (arXiv 2603.07079)** — directly motivates §3.4 mixed KL; cited for empirical recipe. https://papers.cool/arxiv/2603.07079
@@ -464,7 +493,7 @@ Per Codex `gpt-5.5` audit recommendation:
 
 **One-sentence paper claim** (lock):
 
-> We introduce **G-OPD-Flash**, a graph on-policy distillation procedure that adapts the on-policy principle from autoregressive trajectories to graph fraud detection by sampling student-selected node states from a stop-gradient student-induced distribution and querying a frozen RAER/LREE teacher only on those states; the loss is an entropy-aware mixed Bernoulli KL over three auxiliary heads with node-level reliability weighting and adaptive BCE anchor, preserving the four hard contracts (base-freeze SHA-256, score-blind input, train-only prototype, $\delta$-bounded residual) and targeting $\geq 95\,\%$ AUPRC capture of the teacher at $\geq 2.59\times$ inference speed-up under a 4 k-parameter student.
+> We introduce **G-OPD-Flash**, the **first contract-preserving student-policy node-state distillation framework** for graph fraud detection over RAER/LREE adapters: a 4–5 k-parameter student induces a stop-gradient sampling distribution $q_\phi$ over training nodes from its own posterior entropy / fraud probability / residual magnitude, and a frozen RAER teacher supplies entropy-aware mixed Bernoulli-KL supervision plus three auxiliary head-matching terms (final logit, per-relation contribution, gate) only on sampled $\mathcal{B}$; the four hard contracts (base-freeze SHA-256, score-blind input, train-only prototype, $\delta$-bounded residual) are enforced during every sampling epoch, and the procedure targets $\geq 95\,\%$ AUPRC capture of the teacher at $\geq 2.59\times$ inference speed-up. **Boundary (Codex round-3 MF5)**: distinct from prior graph RL-distillation (e.g. FreeKD KDD'22) by the contract-preservation requirement and from LLM-OPD (e.g. GKD ICLR 2024) by the node-state policy.
 
 **One-sentence novelty contour** (lock):
 
