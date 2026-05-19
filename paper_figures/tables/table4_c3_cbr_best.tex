@@ -1,0 +1,20 @@
+% Table 4 — C3 CBR-BEST per-cell paired-t: 4/8 sig p<0.05 + 2/8 sig p<0.01 vs det_mask; 3/8 sig vs CBR-K1
+\begin{table}[ht]
+\centering
+\caption{Table 4 — C3 CBR-BEST per-cell paired-t: 4/8 sig p<0.05 + 2/8 sig p<0.01 vs det_mask; 3/8 sig vs CBR-K1}
+\small
+\begin{tabular}{lrrrrrrrrr}
+\toprule
+Cell & det_mask baseline & CBR-BEST & Δ vs det_mask & t-vs-DM & p-vs-DM & sig vs DM & t-vs-CBR-K1 & p-vs-CBR-K1 & sig vs CBR-K1 \\
+\midrule
+Yelpchi-BWGNN & 0.6195$\pm$0.0158 & 0.6276$\pm$0.0177 & +0.0081 & +1.48 & 0.1067 &  & +1.40 & 0.1168 &  \\
+Yelpchi-SAGE & 0.6258$\pm$0.0185 & 0.6387$\pm$0.0127 & +0.0130 & +2.79 & 0.0246 & \textstar & +2.98 & 0.0203 & \textstar \\
+Yelpchi-GCN & 0.5777$\pm$0.0217 & 0.5883$\pm$0.0168 & +0.0106 & +4.36 & 0.0060 & \textstar\textstar & +2.81 & 0.0243 & \textstar \\
+Yelpchi-GAT & 0.6180$\pm$0.0126 & 0.6329$\pm$0.0117 & +0.0149 & +4.27 & 0.0065 & \textstar\textstar & +2.91 & 0.0219 & \textstar \\
+Amazon-BWGNN & 0.8657$\pm$0.0312 & 0.8657$\pm$0.0289 & -0.0000 & -0.02 & 0.5060 &  & -1.10 & 0.8329 &  \\
+Amazon-SAGE & 0.8489$\pm$0.0121 & 0.8466$\pm$0.0168 & -0.0023 & -1.10 & 0.8327 &  & -1.38 & 0.8805 &  \\
+Amazon-GCN & 0.6856$\pm$0.2577 & 0.6939$\pm$0.2611 & +0.0082 & +2.16 & 0.0483 & \textstar & +0.02 & 0.4908 &  \\
+Amazon-GAT & 0.5298$\pm$0.3924 & 0.5320$\pm$0.3949 & +0.0022 & +0.96 & 0.1962 &  & +0.26 & 0.4049 &  \\
+\bottomrule
+\end{tabular}
+\end{table}
