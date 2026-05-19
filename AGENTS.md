@@ -515,6 +515,53 @@ artifacts/results/yelpchi/{base}/idea2b_ablate_{switch}/seed_*/             (60 
 
 ---
 
+## 14. OPD-Flash: On-Policy Distillation for Lightweight RAER Adapters (Idea 2C, in design)
+
+**Status**: design locked at `docs/OPD_FLASH_DESIGN.md` (v1, 2026-05-19). Implementation in progress.
+
+### One-sentence framing
+
+OPD-Flash is the first on-policy distillation framework for graph anomaly detection: a 4 k-parameter student adapter generates its *own* posterior on training nodes, and the frozen LREE-Reasoner teacher (Idea 2B) provides **multi-head dense supervision** — final logit, per-relation $\Delta_r$, softmax gate, prototype projection — restricted to entropy-aware informative nodes, with a cell-aware teacher-reliability gate. Target: ≥ 95 % AUPRC capture (vs current 85–93 %), ≥ 2.59 × inference speed-up, score-blind / bounded / zero-init contracts preserved during rollout sampling.
+
+### Three graph-specific contributions vs vanilla OPD-LLM
+
+| # | Contribution | Why graph-specific |
+|---|---|---|
+| 1 | Multi-head dense supervision (logit + $\Delta_r$ + gate + proto) | OPD-LLM only distills final-token distribution; RAER has 4 natural information sources |
+| 2 | Cell-aware teacher-reliability weight $w_c$ | Per-(dataset, base) reliability calibration (Uni-OPD does it per sequence) |
+| 3 | Contract-preserving rollouts | Score-blind / bounded / zero-init enforced during student sampling — no LLM-OPD analogue |
+
+### Implementation status (subtasks T1–T6)
+
+| Task | Status | Owner |
+|---|---|---|
+| T1 — teacher multi-head exposure | TODO | — |
+| T2 — student multi-head adapter | TODO | — |
+| T3 — OPD-Flash training loop | TODO | — |
+| T4 — cell-aware reliability cache | TODO | — |
+| T5 — 8-cell × 5-seed benchmark | TODO | — |
+| T6 — FreeKD / PEKD baseline reproduction | TODO (optional) | — |
+
+See `docs/OPD_FLASH_DESIGN.md` for full algorithm, hyperparameters, theoretical sketch, risk register, and reading list.
+
+---
+
+## 15. Archived: Idea 3 (LLM-driven Feature Design)
+
+**Status**: ARCHIVED on 2026-05-19. See `archive/idea3/README.md` for the full inventory + restore protocol.
+
+**Reason for archive**: the LLM-feature-design line of work (CAAFE-style summary-only prompts, OpenFE / gplearn-SR shootout, multi-LLM scaling, REL-curriculum active learning, PLM REINFORCE selection) reached a state where Base + LLM features ≈ 0.666 AUPRC matched or exceeded Base + CoVER-REL ≈ 0.609 on the YelpChi-BWGNN single-seed quick screen. In the full Base + REL + LLM stack, REL's marginal contribution shrank to ~+0.002 AUPRC. This created an internal narrative tension that conflicts with the RAER framing of Idea 1+2. The TKDE 2026 submission focuses on RAER + LREE + OPD-Flash; Idea 3 is shelved for a potential follow-up venue (KDD 2026 AI-FA workshop on LLM-for-fraud).
+
+**For new sessions / new agents**: treat `archive/idea3/` as read-only historical context. **Do not** import, extend, cite, or repurpose any script / artifact from there for the current paper. The `res.md` file intentionally retains all Idea 3 sections (§7 AL, §8 LLM feature design with subsections) as the honest experimental record — but the TKDE draft will exclude them.
+
+**Two notable bugs from Idea 3 that hardened the live codebase** (kept fixed, not reverted):
+1. `phase4_plm_adapter` 4-bug cascade → REINFORCE candidate selection (commit `13fb854`).
+2. `parse_llm_formulas` silent prompt-echo mis-extraction + `build_composite_features` zero-fallback → sympy validation + `fail_mode='raise'` default (commit `cc642c7`).
+
+These fixes live in the archive copy (post-fix versions) and are also reflected in `docs/OPD_FLASH_DESIGN.md` §9 (risk register) as cautionary precedent.
+
+---
+
 ## Summary (TPAMI-grade narrative)
 
 ### One-sentence elevator pitch

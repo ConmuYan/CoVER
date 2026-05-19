@@ -89,3 +89,7 @@ runs/
 .sisyphus/
 .ruff_cache/
 *.feather
+
+# Idea-3 archive: keep scripts/README/tables in git, exclude large results/logs
+archive/idea3/results/
+archive/idea3/logs/

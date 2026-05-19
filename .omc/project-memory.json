@@ -227,6 +227,12 @@
       "type": "file"
     },
     {
+      "path": "AGENTS.md",
+      "accessCount": 4,
+      "lastAccessed": 1779181733810,
+      "type": "file"
+    },
+    {
       "path": "artifacts/tables/idea3_full_benchmark.md",
       "accessCount": 3,
       "lastAccessed": 1779118363993,
@@ -254,12 +260,6 @@
       "path": "artifacts/tables/idea3_autofe_baselines.md",
       "accessCount": 2,
       "lastAccessed": 1779118363918,
-      "type": "file"
-    },
-    {
-      "path": "AGENTS.md",
-      "accessCount": 2,
-      "lastAccessed": 1779121152555,
       "type": "file"
     },
     {
@@ -350,6 +350,24 @@
       "path": "artifacts/results/idea3_scaling/llm_formulas.json",
       "accessCount": 1,
       "lastAccessed": 1779177035067,
+      "type": "file"
+    },
+    {
+      "path": "docs/TKDE_2026_SUBMISSION_PLAN.md",
+      "accessCount": 1,
+      "lastAccessed": 1779179413324,
+      "type": "file"
+    },
+    {
+      "path": "docs/OPD_FLASH_DESIGN.md",
+      "accessCount": 1,
+      "lastAccessed": 1779181555812,
+      "type": "file"
+    },
+    {
+      "path": "archive/idea3/README.md",
+      "accessCount": 1,
+      "lastAccessed": 1779181699985,
       "type": "file"
     }
   ]

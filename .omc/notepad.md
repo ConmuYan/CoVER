@@ -3,42 +3,17 @@
 
 ## Priority Context
 <!-- ALWAYS loaded. Keep under 500 chars. Critical discoveries only. -->
-Idea 3 三 track 全部完成（已 commit 726214f 之前 + 后续新产出未 commit）:
-Track 1 CAAFE: Ours vs CAAFE +0.019 ★★, vs PromptFE +0.023 ★ (40 pairs df=39)
-Track 2 Multi-LLM: 关键发现——只有 instruct 模型可设计公式，scaling law 不成立
-Track 3 OpenFE+SR: Ours vs OpenFE +0.066 ★ ✨, vs GP +0.031 ★★, vs Random +0.027 ★, vs Systematic +0.041 ★★
-仍需: (1) 更新 res.md 加 OpenFE 数据 (2) 跑 Codex 终审 (3) commit + push (4) 决定是否需要 PLM 修复
-Idea 1+2 ✅ committed phase3/commit1-v2; Idea 3 on idea3/llm-case-retrieval
+TKDE 2026 投稿主线 = Idea 1 (CoVER-REL → RAER 范式) + Idea 2 (LREE 最优 + OPD-Flash Distill)。Idea 3 已 ARCHIVE 到 archive/idea3/ — 新 session 不要 touch idea3 任何 script/artifact。当前主要任务: 实施 OPD-Flash (docs/OPD_FLASH_DESIGN.md v1) — T1-T5 subtasks. 已修复 5 个 silent failure bugs (parser/builder/phase/max_new_tokens/PLM) 保留在 live codebase. 投稿 plan: docs/TKDE_2026_SUBMISSION_PLAN.md. 当前 branch: idea3/llm-case-retrieval (历史名, 不再代表当前 focus). 新 session 应当: 读 AGENTS.md §14 OPD-Flash + §15 Archive Note 先.
 
 ## Working Memory
 <!-- Session notes. Auto-pruned after 7 days. -->
-### 2026-05-12 18:16
-## Task 8.1 Results Summary
 
-### What Was Done
-1. Fixed pytest.ini to exclude external/ and artifacts/
-2. Ran YelpChi Qwen controlled experiment (3 seeds: 123, 456, 789, trace_size=32)
-3. Aggregated results with fair same-seed comparisons
-4. Generated evidence quality reports
-
-### Key Findings
-- Qwen vs Rule: Δ ROC-AUC: +0.0000, Δ F1: +0.0001 (nearly identical)
-- Qwen vs BWGNN: Δ ROC-AUC: +0.0000, Δ F1: -0.1387 (F1 regression)
-- Rule vs BWGNN: Δ ROC-AUC: +0.0000, Δ F1: -0.1388 (F1 regression)
-- Both reasoners hurt F1 performance
-- Low ERR diversity: 93/96 Qwen ERRs have structural_discrepancy
-- F1=0 anomaly: Seed 123 in both reasoners
-
-### Output Files
-- artifacts/tables/controlled_experiments_metrics.md
-- artifacts/tables/evidence_quality_summary.md
-- artifacts/reports/yelpchi/bwgnn/method_comparison.md
-
-### Next Steps
-1. Investigate F1 regression root cause (lambda_evi, threshold, ERR diversity)
-2. Run Amazon Qwen experiment
-3. Increase trace_size for more diverse evidence
-4. Ablation studies
+### 2026-05-19 17:00 — Idea 3 archive + OPD-Flash pivot
+Decision: archive Idea 3 (LLM-driven feature design); refocus TKDE 2026 paper on
+Idea 1 (RAER) + Idea 2 (LREE + OPD-Flash). All idea3 scripts/tables/results/logs
+moved to archive/idea3/. AGENTS.md gains §14 (OPD-Flash design) + §15 (Archive
+note). Live codebase keeps all 5 silent-failure fixes from the Idea 3 audit pass.
+Next: implement OPD-Flash T1-T5 per docs/OPD_FLASH_DESIGN.md.
 
 
 ## MANUAL
