@@ -45,6 +45,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from data.load_fraud import load_fraud_dataset
+from evidence.learned_extractor import build_learned_extractor
 from evidence.relation_features import RELATION_SCHEMAS, load_relation_stats
 from models.cover_rel_reasoner import CoVERRelReasoner
 from models.gnn import build_detector
@@ -163,6 +164,81 @@ def load_relation_features(dataset_name, model_name, seed, num_nodes):
     rel_stats, rel_meta = load_relation_stats(rel_path, num_nodes=num_nodes)
     print(f"[Distill] Loaded relation features {tuple(rel_stats.shape)} from {rel_path}")
     return rel_stats, rel_meta
+
+
+def load_relation_adjs_for_extractor(
+    dataset_name: str,
+    dataset_path: str | Path,
+    relation_names: list[str],
+    num_nodes: int,
+    device: torch.device,
+) -> list[torch.Tensor]:
+    """Load per-relation sparse COO adjacencies for a learned extractor."""
+    from scipy.io import loadmat
+    from scipy.sparse import coo_matrix, issparse
+
+    schema = RELATION_SCHEMAS[dataset_name]
+    mat = loadmat(str(dataset_path))
+    adjs: list[torch.Tensor] = []
+    for rel_name in relation_names:
+        key = rel_name.upper()
+        if key not in schema:
+            raise KeyError(f"relation {key!r} not in schema for {dataset_name}")
+        mat_key = schema[key]["mat_key"]
+        if mat_key not in mat:
+            raise KeyError(f"matrix key {mat_key!r} not found in {dataset_path}")
+        m = mat[mat_key]
+        sp = m.tocoo() if issparse(m) else coo_matrix(m)
+        if sp.shape[0] != num_nodes or sp.shape[1] != num_nodes:
+            raise ValueError(
+                f"adj shape {sp.shape} != ({num_nodes}, {num_nodes}) for relation {key}"
+            )
+        indices = torch.tensor(
+            np.vstack([sp.row, sp.col]), dtype=torch.long, device=device
+        )
+        values = torch.tensor(sp.data, dtype=torch.float32, device=device)
+        adjs.append(torch.sparse_coo_tensor(indices, values, (num_nodes, num_nodes)).coalesce())
+    return adjs
+
+
+@torch.no_grad()
+def build_learned_teacher_features(
+    config: dict,
+    data,
+    relation_names: list[str],
+    extractor_ckpt_path: Path,
+    device: torch.device,
+) -> torch.Tensor:
+    """Recreate frozen Idea-2B learned evidence used by the teacher."""
+    p2_cfg = config["phase2_reasoner"]
+    evidence_cfg = p2_cfg.get("evidence", {}) or {}
+    ext_cfg = evidence_cfg.get("extractor", {}) or {}
+    extractor = build_learned_extractor(
+        x_dim=int(data.x.shape[1]),
+        num_relations=len(relation_names),
+        cfg={**ext_cfg, "out_dim_per_rel": int(ext_cfg.get("out_dim_per_rel", 9))},
+    ).to(device)
+    extractor.load_state_dict(torch.load(extractor_ckpt_path, weights_only=True, map_location=device))
+
+    dataset_path = config["dataset"].get("path")
+    if dataset_path is None:
+        raise ValueError("dataset.path required for learned teacher evidence")
+    x_dev = data.x.to(device)
+    relation_adjs = load_relation_adjs_for_extractor(
+        dataset_name=config["dataset"]["name"],
+        dataset_path=dataset_path,
+        relation_names=relation_names,
+        num_nodes=int(data.x.shape[0]),
+        device=device,
+    )
+    extractor.prepare(x_dev, relation_adjs)
+    extractor.eval()
+    rel_features = extractor(x_dev, data.train_mask.to(device), data.y.to(device).long())
+    print(
+        f"[Distill] Built learned teacher features {tuple(rel_features.shape)} "
+        f"from {extractor_ckpt_path}"
+    )
+    return rel_features.detach()
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -487,6 +563,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--run_name", type=str, default="idea2c_distill_adapter")
     p.add_argument("--teacher_ckpt", type=str, required=True,
                    help="Path to frozen CoVER-REL teacher reasoner.pt")
+    p.add_argument("--teacher_extractor_ckpt", type=str, default=None,
+                   help="Optional Idea-2B learned evidence_extractor.pt for the teacher")
     p.add_argument("--base_ckpt_path", type=str, default=None,
                    help="Override path to base.pt")
     p.add_argument("--no-tensorboard", action="store_true")
@@ -561,6 +639,24 @@ def main() -> None:
     if not relation_names:
         relation_names = list(RELATION_SCHEMAS[dataset_name].keys())
     num_relations = len(relation_names)
+
+    # ----- Optional: replace hand-crafted evidence with frozen 2B learned evidence -----
+    if args.teacher_extractor_ckpt is not None:
+        extractor_ckpt_path = Path(args.teacher_extractor_ckpt)
+        if not extractor_ckpt_path.exists():
+            raise FileNotFoundError(f"Teacher extractor checkpoint not found: {extractor_ckpt_path}")
+        rel_features = build_learned_teacher_features(
+            config=config,
+            data=data,
+            relation_names=relation_names,
+            extractor_ckpt_path=extractor_ckpt_path,
+            device=device,
+        )
+        rel_meta = {
+            **rel_meta,
+            "evidence_source": "learned",
+            "teacher_extractor_ckpt": str(extractor_ckpt_path),
+        }
 
     # ----- Load frozen teacher -----
     teacher_ckpt_path = Path(args.teacher_ckpt)
