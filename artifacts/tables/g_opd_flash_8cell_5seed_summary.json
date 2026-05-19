@@ -24,6 +24,72 @@
       "vs_det_mask_directional_positive": 0,
       "vs_det_mask_sig_p05": 0
     },
+    "det_mask_cbr": {
+      "auprc_mean_across_cells": 0.6754646622844059,
+      "auprc_std_across_cells": 0.12171472319385812,
+      "cells_evaluated": 8,
+      "directional_positive_cells": 8,
+      "n_total_runs": 40,
+      "sig_cells_p01": 2,
+      "sig_cells_p05": 4,
+      "vs_det_mask_directional_positive": 8,
+      "vs_det_mask_sig_p05": 3
+    },
+    "det_mask_fixed_bce": {
+      "auprc_mean_across_cells": 0.6704262164583243,
+      "auprc_std_across_cells": 0.1238508490512604,
+      "cells_evaluated": 8,
+      "directional_positive_cells": 8,
+      "n_total_runs": 40,
+      "sig_cells_p01": 2,
+      "sig_cells_p05": 4,
+      "vs_det_mask_directional_positive": 3,
+      "vs_det_mask_sig_p05": 0
+    },
+    "det_mask_mh": {
+      "auprc_mean_across_cells": 0.666299114809538,
+      "auprc_std_across_cells": 0.12493677603989153,
+      "cells_evaluated": 8,
+      "directional_positive_cells": 7,
+      "n_total_runs": 40,
+      "sig_cells_p01": 2,
+      "sig_cells_p05": 2,
+      "vs_det_mask_directional_positive": 0,
+      "vs_det_mask_sig_p05": 0
+    },
+    "det_mask_no_rel": {
+      "auprc_mean_across_cells": 0.6720939759429653,
+      "auprc_std_across_cells": 0.12285802995800298,
+      "cells_evaluated": 8,
+      "directional_positive_cells": 8,
+      "n_total_runs": 40,
+      "sig_cells_p01": 2,
+      "sig_cells_p05": 4,
+      "vs_det_mask_directional_positive": 4,
+      "vs_det_mask_sig_p05": 1
+    },
+    "det_mask_rev_only": {
+      "auprc_mean_across_cells": 0.6707195896559399,
+      "auprc_std_across_cells": 0.12306504269534987,
+      "cells_evaluated": 8,
+      "directional_positive_cells": 8,
+      "n_total_runs": 40,
+      "sig_cells_p01": 2,
+      "sig_cells_p05": 2,
+      "vs_det_mask_directional_positive": 2,
+      "vs_det_mask_sig_p05": 0
+    },
+    "det_mask_single_denom": {
+      "auprc_mean_across_cells": 0.6710303685954129,
+      "auprc_std_across_cells": 0.12276266445248622,
+      "cells_evaluated": 8,
+      "directional_positive_cells": 8,
+      "n_total_runs": 40,
+      "sig_cells_p01": 2,
+      "sig_cells_p05": 4,
+      "vs_det_mask_directional_positive": 4,
+      "vs_det_mask_sig_p05": 0
+    },
     "g_opd_flash": {
       "auprc_mean_across_cells": 0.6585034267830512,
       "auprc_std_across_cells": 0.12889357811197938,
