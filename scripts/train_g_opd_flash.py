@@ -386,6 +386,9 @@ def _compute_distill_terms_on_indices(
     cbr_lambda: float = 0.0,              # if > 0: enable Contract-Budgeted Residual allocation penalty
     cbr_base_logits: torch.Tensor | None = None,  # base logits for sensitivity proxy (CBR only)
     cbr_delta_max: float = 2.0,           # δ_max for CBR normalisation
+    # ── v3.6 P0+P1 ablation flags (ablation-planner round) ──
+    cbr_weight_form: str = "linear",      # "linear" | "sq" | "exp" | "bin" — CBR weight function on (1-sens)
+    cbr_symmetric_beta: float = 0.0,      # if > 0: add symmetric positive reward -β·|Δ^S|·sens (tests reallocation hypothesis)
 ) -> tuple[torch.Tensor, dict[str, float], dict[str, torch.Tensor]]:
     """Run Phase C+D+E+F on a set of node indices ``idx`` (the sampled batch
     in g_opd_flash mode, or all train nodes in all_node_mh mode).
@@ -471,14 +474,31 @@ def _compute_distill_terms_on_indices(
     # sensitivity_i = |teacher_residual| / δ_max ∈ [0, 1]
     # waste_i = |student_residual| / δ_max · (1 - sensitivity_i)
     # L_budget = mean(waste_i) — encourages conserving budget where teacher does
+    #
+    # v3.6 P1-5/P1-6: weight form + symmetric reward ablation flags.
     cbr_loss_val = 0.0
     if cbr_lambda > 0 and cbr_base_logits is not None:
         base_idx = cbr_base_logits.detach().view(-1)[idx].to(p_S.device)
         teacher_logit_idx = teacher_cache["logit"][idx].to(p_S.device).detach()
         sensitivity = ((teacher_logit_idx - base_idx).abs() / float(cbr_delta_max)).clamp(0.0, 1.0)
         student_delta = (s_S_logit - base_idx).abs() / float(cbr_delta_max)
-        waste = student_delta * (1.0 - sensitivity)
+        # v3.6 P1-6: CBR weight form
+        if cbr_weight_form == "linear":
+            cbr_weight = 1.0 - sensitivity
+        elif cbr_weight_form == "sq":
+            cbr_weight = (1.0 - sensitivity) ** 2
+        elif cbr_weight_form == "exp":
+            cbr_weight = torch.exp(-sensitivity)
+        elif cbr_weight_form == "bin":
+            cbr_weight = (sensitivity < 0.3).to(p_S.dtype)
+        else:
+            raise ValueError(f"unknown cbr_weight_form={cbr_weight_form!r}")
+        waste = student_delta * cbr_weight
         L_budget = waste.mean()
+        # v3.6 P1-5: symmetric positive reward (tests "reallocation" hypothesis)
+        if cbr_symmetric_beta > 0:
+            useful = student_delta * sensitivity
+            L_budget = L_budget - cbr_symmetric_beta * useful.mean()
         L_total = L_total + cbr_lambda * L_budget
         cbr_loss_val = float(L_budget.detach())
 
@@ -901,23 +921,43 @@ def train_g_opd_flash(
             # budget on nodes where teacher needs intervention (high
             # |teacher_residual|), conserve on nodes where teacher barely
             # intervened (base already correct).
+            #
+            # v3.6 P1-7: mask_criterion controls how `idx` is constructed:
+            #   topk_H_S       — top-K by student entropy (default, K1 K2)
+            #   topk_H_T       — top-K by TEACHER entropy
+            #   topk_disagree  — top-K by |p_S - p_T| (student-teacher disagreement)
+            #   random_k       — random K (placebo control)
             with torch.no_grad():
-                s_out = student(base_z, base_logits, rel_features, return_heads=False)
-                p_S = torch.sigmoid(s_out["final_logit"])
-                H_S = bernoulli_entropy(p_S)
-                H_train = H_S.clone()
-                H_train[~train_mask] = -float("inf")
-                topk = torch.topk(H_train, K_eff).indices
+                s_out_full = student(base_z, base_logits, rel_features, return_heads=False)
+                p_S_full = torch.sigmoid(s_out_full["final_logit"])
+                p_T_full = teacher_cache["p"]
+                mask_crit = distill_cfg.get("mask_criterion", "topk_H_S")
+                if mask_crit == "topk_H_S":
+                    score = bernoulli_entropy(p_S_full).clone()
+                elif mask_crit == "topk_H_T":
+                    score = bernoulli_entropy(p_T_full).clone()
+                elif mask_crit == "topk_disagree":
+                    score = (p_S_full - p_T_full).abs().clone()
+                elif mask_crit == "random_k":
+                    score = torch.rand_like(p_S_full)
+                else:
+                    raise ValueError(f"unknown mask_criterion={mask_crit!r}")
+                score[~train_mask] = -float("inf")
+                topk = torch.topk(score, K_eff).indices
             loss, stats, _ = _compute_distill_terms_on_indices(
                 student=student, teacher_cache=teacher_cache,
                 base_z=base_z, base_logits=base_logits, rel_features=rel_features,
                 idx=topk, rel_helper=rel_helper,
-                alpha_f=alpha_f, alpha_r=0.0, alpha_g=0.0,  # final-only
+                alpha_f=alpha_f,
+                alpha_r=float(distill_cfg.get("alpha_r_for_cbr", 0.0)),
+                alpha_g=float(distill_cfg.get("alpha_g_for_cbr", 0.0)),
                 lambda_min=lambda_min, lambda_extra=lambda_extra,
                 y=y, train_mask=train_mask, pos_weight=pos_weight,
-                cbr_lambda=float(distill_cfg.get("cbr_lambda", 0.5)),  # budget penalty strength
-                cbr_base_logits=base_logits,  # for sensitivity computation
+                cbr_lambda=float(distill_cfg.get("cbr_lambda", 0.5)),
+                cbr_base_logits=base_logits,
                 cbr_delta_max=student.delta_max,
+                cbr_weight_form=str(distill_cfg.get("cbr_weight_form", "linear")),
+                cbr_symmetric_beta=float(distill_cfg.get("cbr_symmetric_beta", 0.0)),
             )
         elif mode == "g_opd_flash":
             # Phase A: build q_φ
@@ -1099,6 +1139,19 @@ def parse_args() -> argparse.Namespace:
                    help="v3.5 Direction A: camouflage disagreement weight strength")
     p.add_argument("--cbr_lambda", type=float, default=0.5,
                    help="v3.5 Direction G: contract-budgeted residual penalty strength")
+    # v3.6 P0+P1 ablation flags
+    p.add_argument("--cbr_weight_form", type=str, default="linear",
+                   choices=["linear", "sq", "exp", "bin"],
+                   help="v3.6 P1-6: CBR weight on (1-sens): linear / sq=(1-s)^2 / exp(-s) / bin[s<0.3]")
+    p.add_argument("--cbr_symmetric_beta", type=float, default=0.0,
+                   help="v3.6 P1-5: if >0 add -β·|Δ|·sens (positive reward on high-sens)")
+    p.add_argument("--mask_criterion", type=str, default="topk_H_S",
+                   choices=["topk_H_S", "topk_H_T", "topk_disagree", "random_k"],
+                   help="v3.6 P1-7: top-K mask criterion (for det_mask_cbr mode)")
+    p.add_argument("--alpha_r_for_cbr", type=float, default=0.0,
+                   help="v3.6 P1-8: if >0, det_mask_cbr also adds multi-head c_per_r MSE")
+    p.add_argument("--alpha_g_for_cbr", type=float, default=0.0,
+                   help="v3.6 P1-8: if >0, det_mask_cbr also adds multi-head gate KL")
 
     # T4 curriculum prior & calibration bins (optional — fallback if absent)
     p.add_argument("--curriculum_prior_path", type=str,
@@ -1267,6 +1320,11 @@ def main() -> None:
         "lambda_distill_v1": args.lambda_distill_v1, "gamma_kl_v1": args.gamma_kl_v1,
         "grad_clip": args.grad_clip,
         "crd_alpha": args.crd_alpha, "cbr_lambda": args.cbr_lambda,
+        "cbr_weight_form": args.cbr_weight_form,
+        "cbr_symmetric_beta": args.cbr_symmetric_beta,
+        "mask_criterion": args.mask_criterion,
+        "alpha_r_for_cbr": args.alpha_r_for_cbr,
+        "alpha_g_for_cbr": args.alpha_g_for_cbr,
     }
     t0 = time.time()
     train_summary, rows = train_g_opd_flash(
