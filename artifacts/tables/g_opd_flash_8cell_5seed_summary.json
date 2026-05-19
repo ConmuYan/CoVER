@@ -1,0 +1,61 @@
+{
+  "baseline_mode": "off_policy",
+  "n_cells_total": 8,
+  "per_mode": {
+    "all_node_mh": {
+      "auprc_mean_across_cells": 0.6596852365590391,
+      "auprc_std_across_cells": 0.12863680823042706,
+      "cells_evaluated": 8,
+      "directional_positive_cells": 8,
+      "n_total_runs": 40,
+      "sig_cells_p01": 0,
+      "sig_cells_p05": 3
+    },
+    "det_mask": {
+      "auprc_mean_across_cells": 0.671381566672933,
+      "auprc_std_across_cells": 0.12301815852944493,
+      "cells_evaluated": 8,
+      "directional_positive_cells": 8,
+      "n_total_runs": 40,
+      "sig_cells_p01": 2,
+      "sig_cells_p05": 3
+    },
+    "g_opd_flash": {
+      "auprc_mean_across_cells": 0.6585034267830512,
+      "auprc_std_across_cells": 0.12889357811197938,
+      "cells_evaluated": 8,
+      "directional_positive_cells": 8,
+      "n_total_runs": 40,
+      "sig_cells_p01": 1,
+      "sig_cells_p05": 4
+    },
+    "off_policy": {
+      "auprc_mean_across_cells": 0.6407358805965309,
+      "auprc_std_across_cells": 0.13528190104898136,
+      "cells_evaluated": 8,
+      "directional_positive_cells": 0,
+      "n_total_runs": 40,
+      "sig_cells_p01": 0,
+      "sig_cells_p05": 0
+    },
+    "opd_action_strict": {
+      "auprc_mean_across_cells": 0.6583422050306591,
+      "auprc_std_across_cells": 0.12798144512172316,
+      "cells_evaluated": 8,
+      "directional_positive_cells": 8,
+      "n_total_runs": 40,
+      "sig_cells_p01": 1,
+      "sig_cells_p05": 3
+    },
+    "opd_action_strict_mh": {
+      "auprc_mean_across_cells": 0.6487331346744907,
+      "auprc_std_across_cells": 0.13122343004326184,
+      "cells_evaluated": 8,
+      "directional_positive_cells": 6,
+      "n_total_runs": 40,
+      "sig_cells_p01": 0,
+      "sig_cells_p05": 2
+    }
+  },
+  "statistical_convention": "Per-cell paired-t (5-seed, one-sided H1: mode > baseline). Cross-cell aggregation reports directional / sig counts only; pooled paired-t across cells is NOT reported because cells are not IID (Critic round-4 fix)."
+}
