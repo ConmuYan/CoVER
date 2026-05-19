@@ -3,7 +3,12 @@
 
 ## Priority Context
 <!-- ALWAYS loaded. Keep under 500 chars. Critical discoveries only. -->
-Task 8.7.4b DONE: Stage2 directional t200 all 5 seeds (42,123,456,789,2026). Mean acceptance=96.9%. Score-blind OK, no corruption. Next: Stage3 CV-SCD-DIR training → final CoVER-DIR vs BWGNN comparison.
+Idea 3 三 track 全部完成（已 commit 726214f 之前 + 后续新产出未 commit）:
+Track 1 CAAFE: Ours vs CAAFE +0.019 ★★, vs PromptFE +0.023 ★ (40 pairs df=39)
+Track 2 Multi-LLM: 关键发现——只有 instruct 模型可设计公式，scaling law 不成立
+Track 3 OpenFE+SR: Ours vs OpenFE +0.066 ★ ✨, vs GP +0.031 ★★, vs Random +0.027 ★, vs Systematic +0.041 ★★
+仍需: (1) 更新 res.md 加 OpenFE 数据 (2) 跑 Codex 终审 (3) commit + push (4) 决定是否需要 PLM 修复
+Idea 1+2 ✅ committed phase3/commit1-v2; Idea 3 on idea3/llm-case-retrieval
 
 ## Working Memory
 <!-- Session notes. Auto-pruned after 7 days. -->
