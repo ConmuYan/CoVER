@@ -88,3 +88,4 @@ runs/
 .claude/
 .sisyphus/
 .ruff_cache/
+*.feather

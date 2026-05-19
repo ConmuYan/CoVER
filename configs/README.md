@@ -1,99 +1,86 @@
-# configs/ — Layout & Conventions
+# configs/ — Layout & Conventions (cls-only canonical)
 
-This directory groups configs by **method generation**, not by dataset.
-The canonical method is the **two-phase CoVER-REL Reasoner**:
+Configs are grouped by **training phase**. The canonical method is the
+two-phase **CoVER-REL Reasoner** with a single cls-only loss; see
+[`AGENTS.md`](../AGENTS.md) §§1–11 for the full TPAMI-style derivation.
 
 ```
-Phase1  : train a fresh base detector (BWGNN / GraphSAGE / GCN / GAT)
-          → frozen as structural prior
-Phase2  : train a unified CoVER-REL Reasoner over relation-aware evidence
-          and optional contract-verified score-blind judge features
-          → z_i = b_i + Δ_rel,i + α_i · Δ_llm,i
+Phase 1 : train a fresh base detector (BWGNN / GraphSAGE / GCN / GAT)
+          → frozen as structural prior (SHA-256 verified)
+Phase 2 : train a unified CoVER-REL Reasoner over relation-aware
+          score-blind 9-dim evidence statistics
+          → z_i = b_i + Δ_rel,i    (no LLM judge term, no α·Δ_llm)
+          → L   = L_cls            (no L_int / L_sparse / L_align)
 ```
-
-See `docs/cover_main.md` for the canonical method, loss, and E0/E1/E2/E3 ablation taxonomy.
 
 ## Layout
 
 ```
 configs/
-├── README.md                                # this file
-├── {yelpchi,amazon}_{bwgnn,sage,gcn,gat}.yaml
-│         # Phase1 base detector configs (model-level only)
-│
-├── phase2_reasoner/
-│   ├── phase2_yelpchi_sage_confirm_lalign_1em2_standard.yaml
-│   └── phase2_amazon_yelpstyle_judge_align.yaml
-│         # Canonical Phase2 unified CoVER-REL Reasoner (current method).
-│         # These are the "confirmed" configs transferred from BWGNN tuning.
-│
-└── cover-rel-gj/                            # legacy "Gate + Judge" family
-    ├── stage3_legacy/                       # Stage3 anchor_gate / judge_train
-    │   ├── stage3_cover_rel_gate_nollm.yaml             # YelpChi anchor_gate
-    │   ├── stage3_cover_rel_amazon_nollm.yaml           # Amazon anchor_gate
-    │   ├── stage3_cover_rel_gcn_gate_nollm.yaml         # GCN  anchor_gate
-    │   ├── stage3_cover_rel_yelpchi_sage_nollm.yaml     # SAGE anchor_gate (YelpChi)
-    │   ├── stage3_cover_rel_amazon_sage_nollm.yaml      # SAGE anchor_gate (Amazon)
-    │   ├── stage3_cover_rel_judge_yelpchi.yaml          # YelpChi judge_train
-    │   ├── stage3_cover_rel_judge_amazon.yaml           # Amazon judge_train
-    │   └── stage3_cover_rel_nollm.yaml                  # YelpChi legacy nollm
-    │
-    └── phase2_ablations/                    # Phase2 E0 / E1 / E2 / E3 ablation configs
-        ├── phase2_{yelpchi,amazon}_E0_relgate.yaml
-        ├── phase2_{yelpchi,amazon}_E1_judge_align.yaml
-        ├── phase2_{yelpchi,amazon}_E2_judge_residual.yaml
-        ├── phase2_{yelpchi,amazon}_E3_no_trust.yaml
-        ├── phase2_{yelpchi,amazon}_{gcn,gat}_E{0,2}*.yaml
-        ├── phase2_{yelpchi,amazon}_sage_E{0,1,2}.yaml
-        └── phase2_amazon_E{0,1,2,3}_*_v2.yaml
+├── README.md                                          # this file
+├── {yelpchi,amazon}_{bwgnn,sage,gcn,gat}.yaml         # Phase 1 base detector (8 files)
+└── phase2_reasoner/
+    └── ablation/                                      # Idea-1 ablation suite (7 cells)
+        ├── idea1_canonical_clsonly.yaml               # cls-only canonical baseline (★)
+        ├── idea1_ablate_gate_uniform.yaml             # gate         : softmax → uniform 1/R
+        ├── idea1_ablate_evidence_no_structural.yaml   # evidence drop: group A  (dims 0-2)
+        ├── idea1_ablate_evidence_no_incoherence.yaml  # evidence drop: group B  (dims 3-5)
+        ├── idea1_ablate_evidence_no_proto.yaml        # evidence drop: group C  (dims 6-8)
+        ├── idea1_ablate_shared_expert.yaml            # experts      : per-relation → shared
+        └── idea1_ablate_unbounded_residual.yaml       # residual     : tanh saturation → identity
 ```
 
-## Naming convention
+## What each file is for
 
-| Family               | Path                                          | Status                                  |
-|----------------------|-----------------------------------------------|-----------------------------------------|
-| Phase1 base          | `configs/{ds}_{base}.yaml`                    | active                                  |
-| **Phase2 canonical** | `configs/phase2_reasoner/*.yaml`              | **canonical (current method)**          |
-| Phase2 ablations     | `configs/cover-rel-gj/phase2_ablations/*.yaml`| diagnostic / E0/E1/E2/E3 study           |
-| Legacy Stage3 G/J    | `configs/cover-rel-gj/stage3_legacy/*.yaml`   | historical baseline (Gate + Judge)      |
+| Path | Purpose |
+|---|---|
+| `{ds}_{base}.yaml` | Phase 1 trainer. Reads `dataset` / `model` / `train` / `eval`. |
+| `phase2_reasoner/ablation/idea1_canonical_clsonly.yaml` | Phase 2 cls-only baseline. Anchors all paired-t comparisons. |
+| `phase2_reasoner/ablation/idea1_ablate_*.yaml` | Idea-1 ablation cells; only one structural toggle changes per file. |
 
-`cover-rel-gj` = legacy **G**ate + **J**udge family. Everything under this
-prefix predates the unified two-phase Reasoner and is kept for reproducibility
-of older results. New experiments should target `configs/phase2_reasoner/`.
+## Idea-1 ablation toggles (only knobs that vary)
 
-## E0 / E1 / E2 / E3 (ablation taxonomy)
+| Knob | Canonical | Ablation value | Carrier file |
+|---|---|---|---|
+| `gate_mode` | `softmax` | `uniform`  (each `g_{i,r}=1/R`) | `idea1_ablate_gate_uniform.yaml` |
+| `evidence_groups` | `[A, B, C]` (all 9 dims) | `[B, C]` (drop **A** structural, dims 0-2) | `idea1_ablate_evidence_no_structural.yaml` |
+| `evidence_groups` | `[A, B, C]` | `[A, C]` (drop **B** feature/neighbour, dims 3-5) | `idea1_ablate_evidence_no_incoherence.yaml` |
+| `evidence_groups` | `[A, B, C]` | `[A, B]` (drop **C** prototype-relative, dims 6-8) | `idea1_ablate_evidence_no_proto.yaml` |
+| `expert_shared` | `false` (per-relation MLPs) | `true`  (single MLP + one-hot relation indicator) | `idea1_ablate_shared_expert.yaml` |
+| `residual_activation` | `tanh` (bounded `δ_max · tanh(u)`) | `identity` (unbounded `δ_max · u`) | `idea1_ablate_unbounded_residual.yaml` |
 
-| Variant | `use_judge` | `alpha_max` | `lambda_align` | `lambda_trust` | Final logit                              |
-|---------|:-----------:|:-----------:|:--------------:|:--------------:|------------------------------------------|
-| E0      | false       | 0           | 0              | >0             | b + Δ_rel                                |
-| E1      | true        | 0           | >0             | >0             | b + Δ_rel   (judge → gate alignment)     |
-| E2      | true        | >0          | >0             | >0             | b + Δ_rel + α · Δ_llm                    |
-| E3      | true        | >0          | >0             | **0**          | b + Δ_rel + α · Δ_llm (no trust)         |
+Every other Phase 2 hyperparameter (`tau_gate=0.7`, `delta_rel_max=2.0`,
+`rel_hidden_dim=64`, `rel_num_layers=2`, `rel_dropout=0.30`, AdamW
+`lr=1e-3 / wd=1e-4`, `epochs=300`, `patience=50`) is held *identical* across
+the 7 configs so the paired-t Δ vs canonical isolates the toggle.
 
-The current canonical "confirmed" config (`configs/phase2_reasoner/...`) is
-an E1-flavored Phase2 setting (`alpha_max=0`, `lambda_align=1e-2`,
-`lambda_trust=3e-3`); the LLM is used for **alignment / regularization** only,
-not as a residual predictor.
+## Deprecated noop knobs
 
-## Migration map (old → new)
+These keys are accepted in the Phase 2 config for backward compatibility but
+do not change behaviour and emit a one-shot `DeprecationWarning`:
 
-Old in-repo references look like `configs/<file>.yaml`. The new locations are:
+| Key | Status | Falsification |
+|---|---|---|
+| `use_judge`, `alpha_max`, `judge_*`, `delta_llm_max`, `alpha_bias_init` | Hard-rejected if *on* (raises `NotImplementedError`) | LLM-judge α·Δ_llm: t=+0.03, p=0.976 |
+| `lambda_int`, `lambda_trust` | Silently ignored | L_int: t=+0.26, p=0.81 (single); t=+1.02, p=0.36 (with L_sparse) |
+| `lambda_sparse` | Silently ignored | L_sparse: t=+2.59, p=0.061 (closest to bar, still fail) |
+| `lambda_align` | Hard-rejected if non-zero | L_align: t=−1.14, p=0.32 |
+| `eta_llm` | Silently ignored | Tied to dead judge path |
 
-| Old path                                                | New path                                                                       |
-|---------------------------------------------------------|--------------------------------------------------------------------------------|
-| `configs/stage3_cover_rel_*.yaml`                       | `configs/cover-rel-gj/stage3_legacy/stage3_cover_rel_*.yaml`                   |
-| `configs/phase2_{ds}_E{0,1,2,3}_*.yaml`                 | `configs/cover-rel-gj/phase2_ablations/phase2_{ds}_E{0,1,2,3}_*.yaml`          |
-| `configs/phase2_{ds}_{gcn,gat,sage}_E{0,1,2}*.yaml`     | `configs/cover-rel-gj/phase2_ablations/phase2_{ds}_{gcn,gat,sage}_E{0,1,2}*.yaml` |
-| `configs/phase2_yelpchi_sage_confirm_lalign_1em2_standard.yaml` | `configs/phase2_reasoner/phase2_yelpchi_sage_confirm_lalign_1em2_standard.yaml`        |
-| `configs/phase2_amazon_yelpstyle_judge_align.yaml`      | `configs/phase2_reasoner/phase2_amazon_yelpstyle_judge_align.yaml`             |
+See `artifacts/tables/yelpchi_bwgnn_ablation_loss_arch_5seed.md` and
+`artifacts/tables/paper_negative_routes.md` for the full 5-seed paired-t
+evidence behind each removal.
 
-Historical reports under `artifacts/reports/` and `artifacts/paper/` keep
-the **old** paths verbatim as time-stamped snapshots; do not rewrite them.
+## Adding new configs
 
-## What goes where, going forward
+- **New base detector** → `configs/{ds}_{newbase}.yaml` with only
+  `dataset` / `model` / `train` / `eval` blocks.
+- **New Phase 2 ablation cell** → `configs/phase2_reasoner/ablation/<name>.yaml`,
+  flipping exactly one structural toggle vs `idea1_canonical_clsonly.yaml`
+  so the paired-t against it is interpretable. The trainer reads any of
+  `gate_mode` / `evidence_groups` / `expert_shared` / `residual_activation`;
+  introduce a new toggle only after wiring it through `models/cover_rel_reasoner.py`.
 
-- Add a **new base detector** → `configs/{ds}_{newbase}.yaml`
-- Add a **new Phase2 canonical setting** → `configs/phase2_reasoner/<name>.yaml`
-- Add a **new E0/E1/E2/E3 ablation** → `configs/cover-rel-gj/phase2_ablations/<name>.yaml`
-- Do **not** add new files under `configs/cover-rel-gj/stage3_legacy/` —
-  that subdirectory is frozen.
+Do *not* re-introduce `stage2:` / `evidence:` / `llm:` / `reasoner:` blocks
+or any of the deprecated loss weights — they will be silently no-op'd or
+hard-rejected and the run will be indistinguishable from canonical.
