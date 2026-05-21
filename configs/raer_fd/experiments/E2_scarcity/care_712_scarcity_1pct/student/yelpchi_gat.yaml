@@ -1,0 +1,87 @@
+project: raer_fd
+dataset:
+  name: yelpchi
+  path: datasets/YelpChi.mat
+  format: mat
+  split_mode: supervised
+  train_ratio: 0.7
+  val_test_ratio:
+  - 1
+  - 2
+  scarcity_ratio: 0.01
+  stratified: true
+model:
+  name: gat
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.5
+  attention_heads: 1
+train:
+  seed: 0
+  epochs: 100
+  debug_epochs: 3
+  lr: 0.01
+  optimizer: adam
+  weight_decay: 0.0005
+  patience: 100
+  device: cuda:0
+  select_metric: auprc
+eval:
+  k_values:
+  - 50
+  - 100
+  - 200
+raer_teacher:
+  run_name: raer_lree
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.0001
+  epochs: 300
+  patience: 50
+  early_stop_metric: val_auprc
+  relation_names:
+  - RUR
+  - RSR
+  - RTR
+  anchor_relation: RUR
+  rel_hidden_dim: 64
+  rel_num_layers: 2
+  rel_dropout: 0.3
+  tau_gate: 0.7
+  evidence_tau: 1.5
+  delta_rel_max: 2.0
+  gate_mode: softmax
+  evidence_groups:
+  - A
+  - B
+  - C
+  expert_shared: false
+  residual_activation: tanh
+  eval_interval: 1
+  evidence:
+    source: learned
+    extractor:
+      hidden_dim: 32
+      encoder_out_dim: 16
+      out_dim_per_rel: 9
+      dropout: 0.3
+experiment:
+  family: cbr_flash
+  stage: student
+  run_name: cbr_flash_care_712_scarcity_1pct
+  teacher_family: raer_lree
+cbr_flash:
+  run_name: cbr_flash_care_712_scarcity_1pct
+  teacher_checkpoint_name: raer_teacher.pt
+  teacher_extractor_checkpoint_name: lree.pt
+  mask_criterion: topk_student_entropy
+  cbr_weight_form: linear
+  cbr_lambda: 0.5
+  K: 2048
+  lambda_min: 0.05
+  lambda_extra: 0.5
+  lr: 0.001
+  weight_decay: 0.0001
+  epochs: 80
+  patience: 10
+  eval_interval: 5

@@ -6,7 +6,7 @@ peak vs 4 GB normal). Frozen base + eval() + no_grad() is deterministic
 by construction, so we can safely skip the deterministic flag here.
 
 Writes the same cache format the trainer reads, so subsequent
-`scripts/train_phase2_reasoner.py --base_ckpt_path ...` calls find it and skip
+`scripts/train_raer_teacher.py --base_ckpt_path ...` calls find it and skip
 the in-trainer forward entirely.
 """
 import sys
@@ -19,12 +19,13 @@ import yaml
 
 from data.load_fraud import load_fraud_dataset
 from models.gnn import build_detector
+from scripts.train_raer_teacher import get_base_output_override_cache_paths
 from utils.paths import ensure_dir
 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--dataset", required=True, choices=["yelpchi", "amazon"])
+    p.add_argument("--dataset", required=True, choices=["yelpchi", "yelpnyc", "yelpzip", "amazon", "tfinance", "tsocial"])
     p.add_argument("--model", required=True, choices=["bwgnn", "sage", "gcn", "gat"])
     p.add_argument("--seeds", nargs="+", type=int, default=[42, 123, 456, 789, 2026])
     p.add_argument("--device", default="cuda:0")
@@ -32,13 +33,18 @@ def main():
     p.add_argument("--num_layers", type=int, default=2)
     p.add_argument("--dropout", type=float, default=0.5)
     p.add_argument("--attention_heads", type=int, default=1, help="GAT only")
-    p.add_argument("--ckpt_subdir", default="fixed_v1_100ep")
+    p.add_argument("--ckpt_subdir", default="base")
     args = p.parse_args()
 
     ds_path = {
         "yelpchi": "datasets/YelpChi.mat",
+        "yelpnyc": "datasets/YelpNYC.mat",
+        "yelpzip": "datasets/YelpZip.mat",
         "amazon":  "datasets/Amazon.mat",
+        "tfinance": "datasets/tfinance",
+        "tsocial": "datasets/tsocial",
     }[args.dataset]
+    ds_format = "dgl" if args.dataset in {"tfinance", "tsocial"} else "mat"
 
     device = torch.device(args.device)
     for seed in args.seeds:
@@ -46,22 +52,19 @@ def main():
         if not ckpt_path.exists():
             print(f"  seed {seed}: SKIP (ckpt missing {ckpt_path})")
             continue
-        # Trainer reads cache name from ckpt_path.parent.name + ckpt_path.stem,
-        # NOT from the ckpt_subdir, when `--base_ckpt_path` is passed.
-        # See load_frozen_base() in scripts/train_phase2_reasoner.py.
-        cache_path = Path(
-            f"artifacts/base_outputs/{args.dataset}/{args.model}/seed_{seed}/"
-            f"_override_{ckpt_path.parent.name}_{ckpt_path.stem}.pt"
-        )
+        default_cache = Path(f"artifacts/base_outputs/{args.dataset}/{args.model}/seed_{seed}/base_outputs.pt")
+        cache_path = get_base_output_override_cache_paths(default_cache, ckpt_path)[0]
         if cache_path.exists():
             print(f"  seed {seed}: SKIP (cache exists {cache_path})")
             continue
         ensure_dir(cache_path.parent)
 
         data = load_fraud_dataset(
-            name=args.dataset, path=ds_path, format="mat",
+            name=args.dataset, path=ds_path, format=ds_format,
+            hsd_invert=True if args.dataset == "tfinance" else False if args.dataset == "tsocial" else None,
             seed=seed, scarcity_ratio=1.0, split_mode="supervised",
             train_ratio=0.4, val_test_ratio=[1, 2], stratified=True,
+            append_hsd=True,
         )
         extra: dict = {}
         if args.model == "gat":

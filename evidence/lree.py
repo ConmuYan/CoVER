@@ -1,0 +1,368 @@
+"""LREE: learnable relation evidence extractor.
+
+Drop-in replacement for the 9-dim hand-crafted A/B/C evidence in
+``evidence/relation_features.py``. Preserves the RAER framework safety
+contracts:
+
+1. **Score-blind**: extractor inputs are raw features ``X``, per-relation
+   adjacency matrices ``A_r``, a train mask, and train labels. The extractor
+   NEVER sees base logits or base embeddings.
+2. **Train-only prototype**: class-anchored prototype features are computed
+   inside ``with torch.no_grad()`` from ``train_mask & (train_labels == c)``
+   only. No val/test labels touched. No gradient flows back through labels.
+   When ``use_proto_features=False``, the proto block is skipped entirely so
+   labels are not read at all.
+3. **Frozen base**: this module is independent of the base detector; no
+   parameter sharing, no logit/embedding access.
+4. **Bounded intervention**: downstream ``RAERTeacher`` still applies
+   ``δ_max · tanh(u)`` so the framework-level intervention bound is unchanged.
+
+Output shape: ``(N, R * out_dim_per_rel)`` — drop-in compatible with the
+existing ``load_relation_features_for_raer()`` interface. Default
+``out_dim_per_rel=9`` matches ``evidence.relation_features.RELATION_STAT_NAMES``.
+
+Training: gradient flows from ``L_cls`` through the reasoner's
+``relation_features`` argument back into this extractor's parameters. The
+hand-crafted prototype features that the trainer used to load from disk are
+now produced online per epoch.
+
+Ablation switches (default values preserve canonical LREE behavior):
+    * ``use_gcn_emb`` (default True) — when False, drop per-relation GCN
+      embedding from the pool input. Encoder(s) are not constructed at all
+      (no dangling unused params).
+    * ``use_proto_features`` (default True) — when False, drop the three
+      train-only proto-distance scalars and skip the proto computation
+      block entirely (labels are not read).
+    * ``encoder_shared`` (default False) — when True, replace the ``R``
+      independent ``RelationGCNEncoder`` instances with a SINGLE encoder
+      that consumes ``x`` concatenated with a one-hot relation id. Mirrors
+      RAER-HC's ``expert_shared`` ablation.
+"""
+from __future__ import annotations
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+def _coalesced_indices_values(adj: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, int]:
+    if not adj.is_sparse:
+        raise ValueError(f"adj must be a sparse tensor, got dense {tuple(adj.shape)}")
+    a = adj.coalesce()
+    return a.indices(), a.values(), int(a.size(0))
+
+
+def symmetric_normalize_sparse_adj(adj: torch.Tensor) -> torch.Tensor:
+    """Compute D^{-1/2} A D^{-1/2} for a sparse COO tensor; returns sparse COO."""
+    indices, values, n = _coalesced_indices_values(adj)
+    deg = torch.zeros(n, device=adj.device, dtype=values.dtype)
+    deg.scatter_add_(0, indices[0], values)
+    deg_inv_sqrt = deg.clamp(min=1e-12).pow(-0.5)
+    norm_values = values * deg_inv_sqrt[indices[0]] * deg_inv_sqrt[indices[1]]
+    return torch.sparse_coo_tensor(indices, norm_values, (n, n)).coalesce()
+
+
+def row_normalize_sparse_adj(adj: torch.Tensor) -> torch.Tensor:
+    """Compute D^{-1} A (row-stochastic mean aggregator); returns sparse COO."""
+    indices, values, n = _coalesced_indices_values(adj)
+    deg = torch.zeros(n, device=adj.device, dtype=values.dtype)
+    deg.scatter_add_(0, indices[0], values)
+    row_vals = values / deg[indices[0]].clamp(min=1.0)
+    return torch.sparse_coo_tensor(indices, row_vals, (n, n)).coalesce()
+
+
+class RelationGCNEncoder(nn.Module):
+    """Small 2-layer symmetric-normalized GCN for a single relation."""
+
+    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int, dropout: float = 0.3):
+        super().__init__()
+        self.lin1 = nn.Linear(in_dim, hidden_dim)
+        self.lin2 = nn.Linear(hidden_dim, out_dim)
+        self.dropout = float(dropout)
+
+    def forward(self, x: torch.Tensor, adj_sym_norm: torch.Tensor) -> torch.Tensor:
+        h = torch.sparse.mm(adj_sym_norm, self.lin1(x))
+        h = F.relu(h)
+        h = F.dropout(h, self.dropout, training=self.training)
+        h = torch.sparse.mm(adj_sym_norm, self.lin2(h))
+        return h
+
+
+class LearnedRelationEvidenceExtractor(nn.Module):
+    """Score-blind, train-only-prototype learned per-relation evidence extractor.
+
+    For each relation ``r`` and node ``i``, produces an evidence vector
+    ``E_{i,r} ∈ R^{out_dim_per_rel}``. The vector composition (per design):
+
+    - **Structural** signal: 2-layer per-relation GCN embedding (analogue of
+      hand-crafted A: ``log_degree_norm``, ``degree_top10``, ``degree_low``).
+    - **Feature-neighbor** signal: raw ``x_i`` and mean of relation-neighbor
+      features (analogue of B: ``feature_l2_deviation_z``, ``neighbor_cosine``,
+      ``zscore_high_fraction``).
+    - **Prototype-relative** signal: z-scored Euclidean distances to
+      train-only fraud / benign prototypes plus their margin (analogue of C:
+      ``fraud_proto_dist_z``, ``benign_proto_dist_z``,
+      ``fraud_minus_benign_margin_z``).
+
+    A per-relation MLP head learns the combination, replacing the hand-crafted
+    quantile-based stats used in ``evidence/relation_features.py``.
+
+    Ablation switches (all default to canonical behavior):
+        * ``use_gcn_emb=True``: include per-relation GCN structural signal.
+        * ``use_proto_features=True``: include train-only proto distances.
+        * ``encoder_shared=False``: per-relation encoders; True ⇒ one shared
+          encoder + one-hot relation id appended to features.
+    """
+
+    def __init__(
+        self,
+        x_dim: int,
+        num_relations: int,
+        hidden_dim: int = 32,
+        encoder_out_dim: int = 16,
+        out_dim_per_rel: int = 9,
+        dropout: float = 0.3,
+        use_gcn_emb: bool = True,
+        use_proto_features: bool = True,
+        encoder_shared: bool = False,
+    ):
+        super().__init__()
+        if num_relations <= 0:
+            raise ValueError("num_relations must be > 0")
+        self.x_dim = int(x_dim)
+        self.num_relations = int(num_relations)
+        self.hidden_dim = int(hidden_dim)
+        self.encoder_out_dim = int(encoder_out_dim)
+        self.out_dim_per_rel = int(out_dim_per_rel)
+        self.dropout = float(dropout)
+        self.use_gcn_emb = bool(use_gcn_emb)
+        self.use_proto_features = bool(use_proto_features)
+        self.encoder_shared = bool(encoder_shared)
+
+        # ----- Build encoders (only when use_gcn_emb=True) -----
+        if self.use_gcn_emb:
+            if self.encoder_shared:
+                # Single encoder consumes [x ; one-hot(r)] of dim x_dim + R.
+                self.shared_encoder = RelationGCNEncoder(
+                    in_dim=x_dim + num_relations,
+                    hidden_dim=hidden_dim,
+                    out_dim=encoder_out_dim,
+                    dropout=dropout,
+                )
+                self.relation_encoders = None
+            else:
+                self.shared_encoder = None
+                self.relation_encoders = nn.ModuleList([
+                    RelationGCNEncoder(
+                        in_dim=x_dim, hidden_dim=hidden_dim,
+                        out_dim=encoder_out_dim, dropout=dropout,
+                    )
+                    for _ in range(num_relations)
+                ])
+        else:
+            self.shared_encoder = None
+            self.relation_encoders = None
+
+        # Per-relation pooling head input dim — depends on which signals are on:
+        #   x (x_dim) + neighbor_mean (x_dim)              # always
+        #   + gcn_emb (encoder_out_dim)                    # iff use_gcn_emb
+        #   + fraud_dist_z (1) + benign_dist_z (1) + margin_z (1)  # iff use_proto_features
+        pool_in_dim = 2 * x_dim
+        if self.use_gcn_emb:
+            pool_in_dim += encoder_out_dim
+        if self.use_proto_features:
+            pool_in_dim += 3
+        self.pool_in_dim = int(pool_in_dim)
+
+        head_modules: list[nn.Module] = []
+        for _ in range(num_relations):
+            layers: list[nn.Module] = [
+                nn.Linear(pool_in_dim, hidden_dim),
+                nn.ReLU(),
+                nn.LayerNorm(hidden_dim),
+            ]
+            if dropout > 0:
+                layers.append(nn.Dropout(dropout))
+            layers.append(nn.Linear(hidden_dim, out_dim_per_rel))
+            head_modules.append(nn.Sequential(*layers))
+        self.relation_heads = nn.ModuleList(head_modules)
+
+        # Cached fixed-across-training tensors (set by ``prepare()``):
+        self._sym_norm_adjs: list[torch.Tensor] = []
+        self._neighbor_means: list[torch.Tensor] = []
+        # When encoder_shared=True we pre-build the per-relation input tensors
+        # [x ; one-hot(r)] inside prepare() and cache them.
+        self._encoder_inputs: list[torch.Tensor] = []
+        self._prepared = False
+
+    @torch.no_grad()
+    def prepare(self, x: torch.Tensor, relation_adjs: list[torch.Tensor]) -> None:
+        """Cache normalized adj and neighbor-mean per relation.
+
+        Called once after the extractor is moved to its device. ``x`` and each
+        adjacency matrix must already be on the same device as the extractor.
+        """
+        if len(relation_adjs) != self.num_relations:
+            raise ValueError(
+                f"expected {self.num_relations} relation adjacency matrices, "
+                f"got {len(relation_adjs)}"
+            )
+        if x.shape[1] != self.x_dim:
+            raise ValueError(f"x feature dim {x.shape[1]} != extractor x_dim {self.x_dim}")
+        sym_norm_adjs: list[torch.Tensor] = []
+        neighbor_means: list[torch.Tensor] = []
+        encoder_inputs: list[torch.Tensor] = []
+        n_nodes = int(x.shape[0])
+        for r, adj in enumerate(relation_adjs):
+            adj_sym = symmetric_normalize_sparse_adj(adj)
+            adj_row = row_normalize_sparse_adj(adj)
+            sym_norm_adjs.append(adj_sym)
+            neighbor_means.append(torch.sparse.mm(adj_row, x))
+            if self.use_gcn_emb and self.encoder_shared:
+                one_hot = torch.zeros(
+                    self.num_relations, device=x.device, dtype=x.dtype,
+                )
+                one_hot[r] = 1.0
+                # Broadcast one-hot across all N nodes: (N, R)
+                tag = one_hot.unsqueeze(0).expand(n_nodes, -1)
+                # NOTE: tag values are stored, not gradient-tracked (no_grad).
+                encoder_inputs.append(torch.cat([x, tag], dim=1))
+        self._sym_norm_adjs = sym_norm_adjs
+        self._neighbor_means = neighbor_means
+        self._encoder_inputs = encoder_inputs
+        self._prepared = True
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        train_mask: torch.Tensor,
+        train_labels: torch.Tensor,
+    ) -> torch.Tensor:
+        """Forward pass producing per-relation evidence.
+
+        Args:
+            x: ``(N, x_dim)`` raw node features.
+            train_mask: ``(N,)`` boolean. Only nodes where this is True
+                contribute to prototype computation. Ignored entirely when
+                ``use_proto_features=False`` (no labels touched).
+            train_labels: ``(N,)`` int64. Only values at ``train_mask=True``
+                positions are read; others may be arbitrary. Ignored entirely
+                when ``use_proto_features=False``.
+
+        Returns:
+            ``(N, R * out_dim_per_rel)`` tensor — drop-in compatible with the
+            hand-crafted ``rel_features`` tensor consumed by
+            ``RAERTeacher.forward``.
+        """
+        if not self._prepared:
+            raise RuntimeError(
+                "Call extractor.prepare(x, relation_adjs) before forward()"
+            )
+
+        # ----- Train-only prototype features (no gradient through labels) -----
+        # Skip entire block when use_proto_features=False: labels untouched.
+        fraud_dist_z: torch.Tensor | None = None
+        benign_dist_z: torch.Tensor | None = None
+        margin_z: torch.Tensor | None = None
+        if self.use_proto_features:
+            with torch.no_grad():
+                fraud_idx = train_mask & (train_labels == 1)
+                benign_idx = train_mask & (train_labels == 0)
+                if fraud_idx.any():
+                    fraud_proto = x[fraud_idx].mean(dim=0)
+                else:
+                    fraud_proto = x.new_zeros(self.x_dim)
+                if benign_idx.any():
+                    benign_proto = x[benign_idx].mean(dim=0)
+                else:
+                    benign_proto = x.new_zeros(self.x_dim)
+
+            # Distances + z-score (gradient flows through x but proto is detached)
+            fraud_dist = (x - fraud_proto.detach()).norm(dim=1, keepdim=True)
+            benign_dist = (x - benign_proto.detach()).norm(dim=1, keepdim=True)
+            margin = fraud_dist - benign_dist
+
+            def _zscore(t: torch.Tensor) -> torch.Tensor:
+                std = t.std().clamp(min=1e-6)
+                return (t - t.mean()) / std
+
+            fraud_dist_z = _zscore(fraud_dist)
+            benign_dist_z = _zscore(benign_dist)
+            margin_z = _zscore(margin)
+
+        # ----- Per-relation evidence -----
+        per_rel: list[torch.Tensor] = []
+        for r in range(self.num_relations):
+            adj_sym = self._sym_norm_adjs[r]
+            neighbor_mean = self._neighbor_means[r]
+            pool_parts: list[torch.Tensor] = [x, neighbor_mean]
+            if self.use_gcn_emb:
+                if self.encoder_shared:
+                    gcn_emb = self.shared_encoder(self._encoder_inputs[r], adj_sym)
+                else:
+                    gcn_emb = self.relation_encoders[r](x, adj_sym)
+                pool_parts.append(gcn_emb)
+            if self.use_proto_features:
+                pool_parts.append(fraud_dist_z)
+                pool_parts.append(benign_dist_z)
+                pool_parts.append(margin_z)
+            pool_in = torch.cat(pool_parts, dim=1)
+            evidence_r = self.relation_heads[r](pool_in)
+            per_rel.append(evidence_r)
+
+        return torch.cat(per_rel, dim=1)
+
+
+def _as_bool(v, name: str) -> bool:
+    """Strict bool coercion; accepts Python bool only (YAML bool decodes to bool)."""
+    if not isinstance(v, bool):
+        raise ValueError(
+            f"raer.evidence.extractor.{name} must be a bool, got {type(v).__name__}={v!r}"
+        )
+    return v
+
+
+def build_lree_extractor(
+    x_dim: int,
+    num_relations: int,
+    cfg: dict | None = None,
+) -> LearnedRelationEvidenceExtractor:
+    """Construct an LREE extractor from a config dict.
+
+    Recognised keys (all optional, with documented defaults):
+        hidden_dim: int = 32
+        encoder_out_dim: int = 16
+        out_dim_per_rel: int = 9
+        dropout: float = 0.3
+        use_gcn_emb: bool = True             # ablation switch #1
+        use_proto_features: bool = True      # ablation switch #2
+        encoder_shared: bool = False         # ablation switch #3
+    """
+    cfg = cfg or {}
+    use_gcn_emb = _as_bool(cfg.get("use_gcn_emb", True), "use_gcn_emb")
+    use_proto_features = _as_bool(cfg.get("use_proto_features", True), "use_proto_features")
+    encoder_shared = _as_bool(cfg.get("encoder_shared", False), "encoder_shared")
+    return LearnedRelationEvidenceExtractor(
+        x_dim=x_dim,
+        num_relations=num_relations,
+        hidden_dim=int(cfg.get("hidden_dim", 32)),
+        encoder_out_dim=int(cfg.get("encoder_out_dim", 16)),
+        out_dim_per_rel=int(cfg.get("out_dim_per_rel", 9)),
+        dropout=float(cfg.get("dropout", 0.3)),
+        use_gcn_emb=use_gcn_emb,
+        use_proto_features=use_proto_features,
+        encoder_shared=encoder_shared,
+    )
+
+
+LREE = LearnedRelationEvidenceExtractor
+
+
+__all__ = [
+    "LREE",
+    "LearnedRelationEvidenceExtractor",
+    "RelationGCNEncoder",
+    "build_lree_extractor",
+    "symmetric_normalize_sparse_adj",
+    "row_normalize_sparse_adj",
+]

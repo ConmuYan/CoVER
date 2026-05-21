@@ -1,6 +1,7 @@
-"""Graph dataset loaders for cover-fd.
+"""Graph dataset loaders for RAER-FD.
 
-Supports synthetic graphs for debug and real datasets (.pt/.pkl/.npz/.mat).
+Supports synthetic graphs, benchmark ``.mat`` files, and DGL single-relation
+datasets used by PriorF-GNN.
 """
 
 from __future__ import annotations
@@ -19,6 +20,26 @@ except ImportError:
     Data = Any
 
 from data.split import generate_masks, stratified_split, apply_scarcity, save_split, load_split
+
+
+REAL_MAT_DATASETS = {
+    "yelpchi": "datasets/YelpChi.mat",
+    "yelpnyc": "datasets/YelpNYC.mat",
+    "yelpzip": "datasets/YelpZip.mat",
+    "amazon": "datasets/Amazon.mat",
+}
+
+
+REAL_DGL_DATASETS = {
+    "tfinance": {
+        "path": "datasets/tfinance",
+        "hsd_invert": True,
+    },
+    "tsocial": {
+        "path": "datasets/tsocial",
+        "hsd_invert": False,
+    },
+}
 
 
 def load_tiny_graph(
@@ -114,7 +135,7 @@ def load_from_npz(path: str | Path) -> Data:
 
 
 def load_from_mat(path: str | Path) -> Data:
-    """Load dataset from .mat file (YelpChi/Amazon format).
+    """Load dataset from .mat file with ``features``, ``label``, and ``homo``.
 
     Adds self-loops to the homogeneous adjacency to match the reference
     BWGNN protocol (``dgl.add_self_loop`` in
@@ -156,11 +177,136 @@ def load_from_mat(path: str | Path) -> Data:
     return Data(x=x, edge_index=edge_index, y=y)
 
 
+def _ensure_dgl_importable() -> None:
+    """Patch DGL graphbolt imports when the compiled extension is unavailable."""
+    import sys
+    import types
+
+    stubs = [
+        "dgl.graphbolt",
+        "dgl.graphbolt.base",
+        "dgl.graphbolt.dataloader",
+        "dgl.graphbolt.impl",
+        "dgl.graphbolt.impl.legacy_dataset",
+        "dgl.graphbolt.impl.ondisk_dataset",
+        "dgl.graphbolt.impl.ondisk_metadata",
+    ]
+    for name in stubs:
+        if name not in sys.modules:
+            mod = types.ModuleType(name)
+            mod.__path__ = []
+            sys.modules[name] = mod
+
+
+def _load_dgl_graphs(path: str):
+    _ensure_dgl_importable()
+    from dgl.data.utils import load_graphs
+
+    return load_graphs(path)
+
+
+def _prepare_dgl_features(graph) -> torch.Tensor:
+    if "feature" not in graph.ndata:
+        raise KeyError("Expected 'feature' in DGL node data")
+    features = graph.ndata["feature"].float()
+    n_raw_feat = int(features.shape[1])
+    n_log_cols = n_raw_feat
+    for col_idx in range(n_raw_feat):
+        col = features[:, col_idx]
+        if col.min() >= 0.0 and col.max() <= 1.0:
+            n_log_cols = col_idx
+            break
+    if n_log_cols > 0:
+        features = torch.cat(
+            [torch.log1p(features[:, :n_log_cols]), features[:, n_log_cols:]],
+            dim=1,
+        )
+    return features
+
+
+def _prepare_dgl_labels(graph) -> torch.Tensor:
+    if "label" not in graph.ndata:
+        raise KeyError("Expected 'label' in DGL node data")
+    raw = graph.ndata["label"]
+    if raw.ndim == 2 and raw.shape[1] == 2:
+        return raw[:, 1].long()
+    return raw.long().view(-1)
+
+
+def _compute_hsd_chunked(
+    x: torch.Tensor,
+    edge_index: torch.Tensor,
+    chunk_size: int = 250_000,
+) -> torch.Tensor:
+    num_nodes = int(x.shape[0])
+    num_edges = int(edge_index.shape[1])
+    if num_edges == 0:
+        return torch.zeros(num_nodes, dtype=x.dtype)
+
+    row, col = edge_index
+    sums = torch.zeros(num_nodes, dtype=x.dtype)
+    counts = torch.zeros(num_nodes, dtype=x.dtype)
+    chunk = max(int(chunk_size), 1)
+    for start in range(0, num_edges, chunk):
+        end = min(start + chunk, num_edges)
+        row_chunk = row[start:end]
+        col_chunk = col[start:end]
+        dist = torch.norm(x[row_chunk] - x[col_chunk], p=2, dim=1)
+        sums.index_add_(0, row_chunk, dist)
+        counts.index_add_(0, row_chunk, torch.ones_like(dist))
+    return torch.nan_to_num(sums / counts.clamp_min(1.0), nan=0.0)
+
+
+def load_from_dgl(
+    path: str | Path,
+    hsd_invert: bool = False,
+    hsd_chunk_size: int = 250_000,
+    append_hsd: bool = True,
+) -> Data:
+    """Load PriorF-GNN DGL single-relation datasets as PyG ``Data``.
+
+    This mirrors the PriorF-GNN DGL loader for ``tfinance`` and ``tsocial``:
+    raw count features receive a ``log1p`` transform, labels are converted from
+    one-hot if needed, HSD is computed score-blindly from the single relation,
+    and HSD is appended as the last feature column.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"DGL dataset not found: {path}")
+    graphs, _ = _load_dgl_graphs(str(path))
+    if not graphs:
+        raise ValueError(f"No graphs found in DGL dataset: {path}")
+    graph = graphs[0]
+
+    features = _prepare_dgl_features(graph)
+    labels = _prepare_dgl_labels(graph)
+    src, dst = graph.edges()
+    edge_index = torch.stack([src.long(), dst.long()], dim=0)
+
+    if append_hsd:
+        hsd = _compute_hsd_chunked(features, edge_index, chunk_size=hsd_chunk_size)
+        if hsd_invert and hsd.numel() > 0 and hsd.max() > 0:
+            hsd = hsd.max() - hsd
+        x = torch.cat([features, hsd.unsqueeze(1)], dim=1)
+    else:
+        hsd = torch.zeros(features.shape[0], dtype=features.dtype)
+        x = features
+    data = Data(
+        x=x,
+        edge_index=edge_index,
+        y=labels,
+        hsd=hsd,
+        edge_type=torch.zeros(edge_index.shape[1], dtype=torch.long),
+    )
+    return data
+
+
 _LOADERS = {
     ".pt": load_from_pt,
     ".pkl": load_from_pkl,
     ".npz": load_from_npz,
     ".mat": load_from_mat,
+    ".dgl": load_from_dgl,
 }
 
 
@@ -174,19 +320,23 @@ def load_fraud_dataset(
     train_ratio: float = 0.7,
     val_test_ratio: list[int] | None = None,
     stratified: bool = False,
+    hsd_invert: bool | None = None,
+    hsd_chunk_size: int = 250_000,
+    append_hsd: bool = True,
 ) -> Data:
     """Load a graph fraud detection dataset.
 
     Supported datasets:
     - tiny: synthetic tiny graph (50 nodes) for testing
     - synthetic_small: synthetic graph (500 nodes)
-    - yelpchi, amazon: real datasets from .mat files
+    - yelpchi, yelpnyc, yelpzip, amazon: real datasets from .mat files
+    - tfinance, tsocial: real DGL single-relation datasets
     - Custom: load from path with specified format
 
     Args:
         name: Dataset name or 'custom'.
         path: Path to dataset file (required for custom).
-        format: File format (pt/pkl/npz/mat). Auto-detected if None.
+        format: File format (pt/pkl/npz/mat/dgl). Auto-detected if None.
         seed: Random seed for splits.
         scarcity_ratio: Fraction of train labels to keep.
         split_mode: Split mode (supervised/semi-supervised).
@@ -199,6 +349,8 @@ def load_fraud_dataset(
     """
     if val_test_ratio is None:
         val_test_ratio = [1, 2]
+
+    name = name.lower()
 
     # Calculate actual ratios from train_ratio and val_test_ratio
     val_ratio = (1 - train_ratio) * val_test_ratio[0] / sum(val_test_ratio)
@@ -217,10 +369,26 @@ def load_fraud_dataset(
         data = load_synthetic_graph(num_nodes=2000, seed=seed)
         if stratified:
             data = stratified_split(data, seed=seed, ratios=ratios)
-    elif name in ("yelpchi", "amazon"):
+    elif name in REAL_MAT_DATASETS:
         if path is None:
-            raise ValueError(f"Path required for dataset '{name}'")
+            path = REAL_MAT_DATASETS[name]
         data = load_from_mat(path)
+        if stratified:
+            data = stratified_split(data, seed=seed, ratios=ratios)
+        else:
+            data = generate_masks(data, seed=seed, ratios=ratios)
+        save_split(data, name, seed, split_mode, train_ratio, val_test_ratio, stratified=stratified)
+    elif name in REAL_DGL_DATASETS:
+        defaults = REAL_DGL_DATASETS[name]
+        if path is None:
+            path = defaults["path"]
+        invert = bool(defaults["hsd_invert"] if hsd_invert is None else hsd_invert)
+        data = load_from_dgl(
+            path,
+            hsd_invert=invert,
+            hsd_chunk_size=hsd_chunk_size,
+            append_hsd=append_hsd,
+        )
         if stratified:
             data = stratified_split(data, seed=seed, ratios=ratios)
         else:
@@ -237,7 +405,15 @@ def load_fraud_dataset(
         loader = _LOADERS.get(ext)
         if loader is None:
             raise ValueError(f"Unknown format: {ext}. Supported: {list(_LOADERS.keys())}")
-        data = loader(path)
+        if ext == ".dgl":
+            data = loader(
+                path,
+                hsd_invert=bool(hsd_invert),
+                hsd_chunk_size=hsd_chunk_size,
+                append_hsd=append_hsd,
+            )
+        else:
+            data = loader(path)
         if not hasattr(data, "train_mask") or data.train_mask is None:
             if stratified:
                 data = stratified_split(data, seed=seed, ratios=ratios)

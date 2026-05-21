@@ -1,0 +1,36 @@
+# RAER-LREE on top of a frozen PriorF-GNN base (40/20/40 protocol).
+# patience = epochs so no early stopping.
+
+dataset:
+  name: yelpchi
+
+phase2_reasoner:
+  run_name: priorfgnn_idea2b_404020
+  epochs: 300
+  patience: 300            # = epochs → no early stopping
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  early_stop_metric: val_auprc
+
+  relation_names: [RUR, RTR, RSR]
+  anchor_relation: RUR
+  rel_hidden_dim: 64
+  rel_num_layers: 2
+  rel_dropout: 0.3
+  tau_gate: 0.7
+  delta_rel_max: 2.0
+  gate_mode: softmax
+
+  evidence:
+    source: learned
+    extractor:
+      hidden_dim: 32
+      encoder_out_dim: 16
+      out_dim_per_rel: 9
+      dropout: 0.3
+      use_gcn_emb: true
+      use_proto_features: true
+      encoder_shared: false
+
+train:
+  seed: 42

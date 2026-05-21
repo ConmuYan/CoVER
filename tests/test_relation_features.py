@@ -115,3 +115,19 @@ def test_relation_features_support_amazon_schema():
     assert result.meta["relation_meta"]["UPU"]["mat_key"] == "net_upu"
     assert any(token.startswith("UPU_") for token in result.rel_tokens[4])
     assert result.meta["test_label_used"] is False
+
+
+def test_yelp_style_new_dataset_schemas_match_yelpchi():
+    for dataset in ("yelpnyc", "yelpzip"):
+        schema = get_relation_schema(dataset)
+        assert list(schema) == ["RUR", "RSR", "RTR"]
+        assert schema["RUR"]["mat_key"] == "net_rur"
+        assert schema["RSR"]["mat_key"] == "net_rsr"
+        assert schema["RTR"]["mat_key"] == "net_rtr"
+
+
+def test_single_relation_dgl_dataset_schemas_use_edge_index():
+    for dataset in ("tfinance", "tsocial"):
+        schema = get_relation_schema(dataset)
+        assert list(schema) == ["EDGE"]
+        assert schema["EDGE"]["mat_key"] == "edge_index"

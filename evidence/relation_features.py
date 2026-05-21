@@ -12,21 +12,36 @@ from scipy import sparse
 from utils.paths import ensure_dir
 
 
-RELATION_SCHEMAS = {
-    "yelpchi": {
-        "RUR": {
-            "mat_key": "net_rur",
-            "description": "same user reviews",
-        },
-        "RSR": {
-            "mat_key": "net_rsr",
-            "description": "same product same star rating reviews",
-        },
-        "RTR": {
-            "mat_key": "net_rtr",
-            "description": "same product same month reviews",
-        },
+YELP_REVIEW_RELATION_SCHEMA = {
+    "RUR": {
+        "mat_key": "net_rur",
+        "description": "same user reviews",
     },
+    "RSR": {
+        "mat_key": "net_rsr",
+        "description": "same product same star rating reviews",
+    },
+    "RTR": {
+        "mat_key": "net_rtr",
+        "description": "same product same month reviews",
+    },
+}
+
+
+SINGLE_RELATION_SCHEMA = {
+    "EDGE": {
+        "mat_key": "edge_index",
+        "description": "single observed homogeneous relation",
+    },
+}
+
+
+RELATION_SCHEMAS = {
+    "yelpchi": YELP_REVIEW_RELATION_SCHEMA,
+    "yelpnyc": YELP_REVIEW_RELATION_SCHEMA,
+    "yelpzip": YELP_REVIEW_RELATION_SCHEMA,
+    "tfinance": SINGLE_RELATION_SCHEMA,
+    "tsocial": SINGLE_RELATION_SCHEMA,
     "amazon": {
         "UPU": {
             "mat_key": "net_upu",
@@ -145,6 +160,90 @@ def compute_relation_features(
     )
 
 
+def compute_relation_features_compact(
+    features: Any,
+    relation_matrices: dict[str, Any],
+    y: torch.Tensor | np.ndarray,
+    train_mask: torch.Tensor | np.ndarray,
+    enabled_relations: list[str] | None = None,
+    relation_schema: dict[str, dict[str, str]] | None = None,
+    z_threshold: float = 2.0,
+    chunk_size: int = 250_000,
+) -> RelationFeatureResult:
+    """Build the same 9-D relation statistics without per-node JSON payloads.
+
+    This is intended for YelpNYC/YelpZip/TSocial scale runs where serializing
+    ``rel_tokens.jsonl`` and top feature dimensions dominates runtime and disk.
+    """
+    x = _to_numpy(features).astype(np.float32)
+    labels = _to_numpy(y).reshape(-1).astype(np.int64)
+    train = _to_numpy(train_mask).reshape(-1).astype(bool)
+    schema = _normalize_relation_schema(relation_schema or RELATIONS)
+    rel_names = _resolve_enabled_relations(enabled_relations, schema)
+    if not rel_names:
+        raise ValueError(
+            "enabled_relations must contain at least one available relation: "
+            f"{', '.join(schema)}"
+        )
+
+    all_stats: list[np.ndarray] = []
+    relation_meta: dict[str, Any] = {}
+    for rel_name in rel_names:
+        rel_spec = schema[rel_name]
+        mat_key = rel_spec["mat_key"]
+        if mat_key not in relation_matrices:
+            raise KeyError(f"relation matrix missing: {mat_key}")
+        matrix_or_edges = relation_matrices[mat_key]
+        if isinstance(matrix_or_edges, torch.Tensor) and matrix_or_edges.ndim == 2:
+            stats, meta = _compute_single_relation_compact_edge_index(
+                rel_name=rel_name,
+                rel_spec=rel_spec,
+                x=x,
+                edge_index=matrix_or_edges,
+                labels=labels,
+                train=train,
+                z_threshold=z_threshold,
+                chunk_size=chunk_size,
+            )
+        else:
+            matrix = _to_csr(matrix_or_edges)
+            stats, meta = _compute_single_relation_compact(
+                rel_name=rel_name,
+                rel_spec=rel_spec,
+                x=x,
+                matrix=matrix,
+                labels=labels,
+                train=train,
+                z_threshold=z_threshold,
+                chunk_size=chunk_size,
+            )
+        all_stats.append(stats)
+        relation_meta[rel_name] = meta
+
+    rel_stats_np = np.concatenate(all_stats, axis=1).astype(np.float32)
+    rel_stats = torch.from_numpy(rel_stats_np)
+    meta = {
+        "relations": rel_names,
+        "relation_descriptions": {name: schema[name]["description"] for name in rel_names},
+        "stat_names_per_relation": RELATION_STAT_NAMES,
+        "rel_dim": int(rel_stats.shape[1]),
+        "num_nodes": int(rel_stats.shape[0]),
+        "score_blind": True,
+        "prototype_labels": "train_only",
+        "target_label_used": False,
+        "val_label_used": False,
+        "test_label_used": False,
+        "relation_meta": relation_meta,
+        "compact": True,
+    }
+    return RelationFeatureResult(
+        rel_stats=rel_stats,
+        rel_tokens={},
+        top_deviation_dims={},
+        meta=meta,
+    )
+
+
 def save_relation_feature_artifacts(result: RelationFeatureResult, output_dir: Path) -> None:
     ensure_dir(output_dir)
     torch.save(
@@ -163,6 +262,21 @@ def save_relation_feature_artifacts(result: RelationFeatureResult, output_dir: P
                 "rel_tokens": result.rel_tokens.get(node_id, []),
                 "top_anonymous_feature_deviation_dims": result.top_deviation_dims.get(node_id, {}),
             }, sort_keys=True) + "\n")
+    (output_dir / "rel_feature_meta.json").write_text(json.dumps(result.meta, indent=2, sort_keys=True) + "\n")
+
+
+def save_relation_feature_tensor_artifacts(result: RelationFeatureResult, output_dir: Path) -> None:
+    """Save only tensor + metadata relation artifacts for large-graph runs."""
+    ensure_dir(output_dir)
+    torch.save(
+        {
+            "rel_stats": result.rel_stats.float(),
+            "rel_dim": int(result.rel_stats.shape[1]),
+            "num_nodes": int(result.rel_stats.shape[0]),
+            "meta": result.meta,
+        },
+        output_dir / "rel_stats.pt",
+    )
     (output_dir / "rel_feature_meta.json").write_text(json.dumps(result.meta, indent=2, sort_keys=True) + "\n")
 
 
@@ -281,6 +395,189 @@ def _compute_single_relation(
         **proto_meta,
     }
     return stats, tokens, top_dims, meta
+
+
+def _compute_single_relation_compact(
+    rel_name: str,
+    rel_spec: dict[str, str],
+    x: np.ndarray,
+    matrix: sparse.csr_matrix,
+    labels: np.ndarray,
+    train: np.ndarray,
+    z_threshold: float,
+    chunk_size: int,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    n, num_features = x.shape
+    degree = np.asarray(matrix.getnnz(axis=1), dtype=np.float32)
+    degree_safe = np.maximum(degree, 1.0)
+    has_neighbors = degree > 0
+
+    neigh_mean = matrix @ x
+    neigh_mean = neigh_mean / degree_safe[:, None]
+    neigh_sq_mean = matrix @ (x * x)
+    neigh_sq_mean = neigh_sq_mean / degree_safe[:, None]
+    neigh_var = np.maximum(neigh_sq_mean - neigh_mean * neigh_mean, 0.0)
+    neigh_std = np.sqrt(neigh_var + 1e-6)
+
+    diff = x - neigh_mean
+    l2_dev = np.linalg.norm(diff, axis=1)
+    cosine = _row_cosine(x, neigh_mean)
+    z_fraction = np.zeros(n, dtype=np.float32)
+    chunk = max(int(chunk_size), 1)
+    for start in range(0, n, chunk):
+        end = min(start + chunk, n)
+        abs_z = np.abs(diff[start:end] / neigh_std[start:end])
+        abs_z[~has_neighbors[start:end]] = 0.0
+        z_fraction[start:end] = (abs_z > float(z_threshold)).sum(axis=1).astype(np.float32) / float(num_features)
+
+    fraud_proto, benign_proto, proto_meta = _relation_prototypes(
+        x=x,
+        neigh_mean=neigh_mean,
+        labels=labels,
+        train=train,
+        has_neighbors=has_neighbors,
+    )
+    fraud_dist = np.linalg.norm(x - fraud_proto[None, :], axis=1)
+    benign_dist = np.linalg.norm(x - benign_proto[None, :], axis=1)
+    margin = fraud_dist - benign_dist
+
+    degree_q10 = float(np.quantile(degree, 0.10))
+    degree_q90 = float(np.quantile(degree, 0.90))
+    dev_q90 = float(np.quantile(l2_dev[has_neighbors], 0.90)) if has_neighbors.any() else 0.0
+    cos_q10 = float(np.quantile(cosine[has_neighbors], 0.10)) if has_neighbors.any() else 0.0
+    fraud_q33 = float(np.quantile(fraud_dist, 0.33))
+    benign_q33 = float(np.quantile(benign_dist, 0.33))
+
+    log_degree = np.log1p(degree)
+    log_degree_norm = log_degree / max(float(log_degree.max()), 1.0)
+    stats = np.stack(
+        [
+            log_degree_norm,
+            (degree >= degree_q90).astype(np.float32),
+            (degree <= degree_q10).astype(np.float32),
+            _zscore(l2_dev),
+            cosine.astype(np.float32),
+            z_fraction,
+            _zscore(fraud_dist),
+            _zscore(benign_dist),
+            _zscore(margin),
+        ],
+        axis=1,
+    ).astype(np.float32)
+
+    meta = {
+        "mat_key": rel_spec["mat_key"],
+        "description": rel_spec["description"],
+        "degree_q10": degree_q10,
+        "degree_q90": degree_q90,
+        "feature_deviation_q90": dev_q90,
+        "neighbor_cosine_q10": cos_q10,
+        "fraud_proto_dist_q33": fraud_q33,
+        "benign_proto_dist_q33": benign_q33,
+        "z_threshold": float(z_threshold),
+        "nodes_with_neighbors": int(has_neighbors.sum()),
+        "compact": True,
+        **proto_meta,
+    }
+    return stats, meta
+
+
+def _compute_single_relation_compact_edge_index(
+    rel_name: str,
+    rel_spec: dict[str, str],
+    x: np.ndarray,
+    edge_index: torch.Tensor,
+    labels: np.ndarray,
+    train: np.ndarray,
+    z_threshold: float,
+    chunk_size: int,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    x_t = torch.as_tensor(x, dtype=torch.float32)
+    edge = edge_index.detach().cpu().long()
+    row = edge[0]
+    col = edge[1]
+    n, num_features = x_t.shape
+    degree_t = torch.bincount(row, minlength=n).to(torch.float32)
+    degree_safe = degree_t.clamp_min(1.0)
+    neigh_sum = torch.zeros((n, num_features), dtype=torch.float32)
+    neigh_sq_sum = torch.zeros((n, num_features), dtype=torch.float32)
+    chunk = max(int(chunk_size), 1)
+    for start in range(0, int(row.numel()), chunk):
+        end = min(start + chunk, int(row.numel()))
+        r = row[start:end]
+        c = col[start:end]
+        neigh_sum.index_add_(0, r, x_t[c])
+        neigh_sq_sum.index_add_(0, r, x_t[c] * x_t[c])
+
+    neigh_mean_t = neigh_sum / degree_safe.unsqueeze(1)
+    neigh_sq_mean_t = neigh_sq_sum / degree_safe.unsqueeze(1)
+    neigh_std_t = torch.sqrt((neigh_sq_mean_t - neigh_mean_t * neigh_mean_t).clamp_min(0.0) + 1e-6)
+    diff_t = x_t - neigh_mean_t
+    l2_dev = torch.linalg.norm(diff_t, dim=1).numpy()
+    cosine = _row_cosine(x, neigh_mean_t.numpy())
+    has_neighbors = degree_t.numpy() > 0
+    z_fraction = torch.zeros(n, dtype=torch.float32)
+    for start in range(0, n, chunk):
+        end = min(start + chunk, n)
+        abs_z = torch.abs(diff_t[start:end] / neigh_std_t[start:end])
+        if not bool(torch.as_tensor(has_neighbors[start:end]).all()):
+            mask = torch.as_tensor(has_neighbors[start:end], dtype=torch.bool)
+            abs_z[~mask] = 0.0
+        z_fraction[start:end] = (abs_z > float(z_threshold)).sum(dim=1).to(torch.float32) / float(num_features)
+
+    neigh_mean = neigh_mean_t.numpy()
+    fraud_proto, benign_proto, proto_meta = _relation_prototypes(
+        x=x,
+        neigh_mean=neigh_mean,
+        labels=labels,
+        train=train,
+        has_neighbors=has_neighbors,
+    )
+    fraud_dist = np.linalg.norm(x - fraud_proto[None, :], axis=1)
+    benign_dist = np.linalg.norm(x - benign_proto[None, :], axis=1)
+    margin = fraud_dist - benign_dist
+
+    degree = degree_t.numpy()
+    degree_q10 = float(np.quantile(degree, 0.10))
+    degree_q90 = float(np.quantile(degree, 0.90))
+    dev_q90 = float(np.quantile(l2_dev[has_neighbors], 0.90)) if has_neighbors.any() else 0.0
+    cos_q10 = float(np.quantile(cosine[has_neighbors], 0.10)) if has_neighbors.any() else 0.0
+    fraud_q33 = float(np.quantile(fraud_dist, 0.33))
+    benign_q33 = float(np.quantile(benign_dist, 0.33))
+
+    log_degree = np.log1p(degree)
+    log_degree_norm = log_degree / max(float(log_degree.max()), 1.0)
+    stats = np.stack(
+        [
+            log_degree_norm,
+            (degree >= degree_q90).astype(np.float32),
+            (degree <= degree_q10).astype(np.float32),
+            _zscore(l2_dev),
+            cosine.astype(np.float32),
+            z_fraction.numpy(),
+            _zscore(fraud_dist),
+            _zscore(benign_dist),
+            _zscore(margin),
+        ],
+        axis=1,
+    ).astype(np.float32)
+
+    meta = {
+        "mat_key": rel_spec["mat_key"],
+        "description": rel_spec["description"],
+        "degree_q10": degree_q10,
+        "degree_q90": degree_q90,
+        "feature_deviation_q90": dev_q90,
+        "neighbor_cosine_q10": cos_q10,
+        "fraud_proto_dist_q33": fraud_q33,
+        "benign_proto_dist_q33": benign_q33,
+        "z_threshold": float(z_threshold),
+        "nodes_with_neighbors": int(has_neighbors.sum()),
+        "compact": True,
+        "edge_index_backend": True,
+        **proto_meta,
+    }
+    return stats, meta
 
 
 def _relation_prototypes(

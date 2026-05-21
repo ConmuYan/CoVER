@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1779106695232,
+  "lastScanned": 1779298153256,
   "projectRoot": "/data1/mq/codes/awesome-graph-anomaly-detection/cover-fd",
   "techStack": {
     "languages": [
@@ -34,37 +34,41 @@
     "isMonorepo": false,
     "workspaces": [],
     "mainDirectories": [
+      "docs",
       "scripts",
       "tests"
     ],
     "gitBranches": null
   },
   "directoryMap": {
+    "archive": {
+      "path": "archive",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1779298153250,
+      "keyFiles": []
+    },
     "artifacts": {
       "path": "artifacts",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1779106695226,
+      "lastAccessed": 1779298153250,
       "keyFiles": []
     },
     "configs": {
       "path": "configs",
       "purpose": null,
-      "fileCount": 9,
-      "lastAccessed": 1779106695226,
+      "fileCount": 1,
+      "lastAccessed": 1779298153251,
       "keyFiles": [
-        "README.md",
-        "amazon_bwgnn.yaml",
-        "amazon_gat.yaml",
-        "amazon_gcn.yaml",
-        "amazon_sage.yaml"
+        "README.md"
       ]
     },
     "data": {
       "path": "data",
       "purpose": "Data files",
       "fileCount": 3,
-      "lastAccessed": 1779106695226,
+      "lastAccessed": 1779298153252,
       "keyFiles": [
         "__init__.py",
         "load_fraud.py",
@@ -74,101 +78,102 @@
     "datasets": {
       "path": "datasets",
       "purpose": null,
-      "fileCount": 2,
-      "lastAccessed": 1779106695228,
+      "fileCount": 6,
+      "lastAccessed": 1779298153253,
       "keyFiles": [
         "Amazon.mat",
-        "YelpChi.mat"
+        "YelpChi.mat",
+        "YelpNYC.mat",
+        "YelpZip.mat",
+        "tfinance"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1779298153253,
+      "keyFiles": [
+        "chapter3_methodology.md"
       ]
     },
     "evidence": {
       "path": "evidence",
       "purpose": null,
-      "fileCount": 3,
-      "lastAccessed": 1779106695228,
+      "fileCount": 4,
+      "lastAccessed": 1779298153253,
       "keyFiles": [
         "__init__.py",
-        "learned_extractor.py",
-        "relation_features.py"
+        "lree.py",
+        "relation_features.py",
+        "scalable_lree.py"
       ]
     },
     "external": {
       "path": "external",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1779106695228,
+      "lastAccessed": 1779298153253,
       "keyFiles": [
         "README_GCN_GAT.md"
-      ]
-    },
-    "logs": {
-      "path": "logs",
-      "purpose": null,
-      "fileCount": 82,
-      "lastAccessed": 1779106695229,
-      "keyFiles": [
-        "_distill_bwgnn_123.log",
-        "_distill_bwgnn_2026.log",
-        "_distill_bwgnn_42.log",
-        "_distill_bwgnn_456.log",
-        "_distill_bwgnn_789.log"
       ]
     },
     "models": {
       "path": "models",
       "purpose": "Data models",
-      "fileCount": 6,
-      "lastAccessed": 1779106695229,
+      "fileCount": 7,
+      "lastAccessed": 1779298153253,
       "keyFiles": [
         "__init__.py",
         "base.py",
         "bwgnn.py",
-        "cover_rel_reasoner.py",
+        "cbr_flash_adapter.py",
         "gnn.py"
       ]
     },
     "scripts": {
       "path": "scripts",
       "purpose": "Build/utility scripts",
-      "fileCount": 22,
-      "lastAccessed": 1779106695229,
+      "fileCount": 16,
+      "lastAccessed": 1779298153254,
       "keyFiles": [
-        "aggregate_ablation.py",
-        "aggregate_idea2b_ablation.py",
-        "aggregate_idea2b_vs_canonical.py",
-        "aggregate_idea3.py",
-        "al_loop.py"
+        "aggregate_cbr_flash.py",
+        "build_relation_features.py",
+        "build_unified_data_404020.py",
+        "pre_cache_base_outputs.py",
+        "run_compact_fullgraph_base_detectors_5seed.sh"
       ]
     },
     "tests": {
       "path": "tests",
       "purpose": "Test files",
-      "fileCount": 12,
-      "lastAccessed": 1779106695229,
+      "fileCount": 15,
+      "lastAccessed": 1779298153254,
       "keyFiles": [
         "test_base_freeze_sha256.py",
         "test_base_model_output.py",
         "test_bwgnn.py",
-        "test_data_loading.py",
-        "test_detector_output_dim.py"
+        "test_cbr_flash_contracts.py",
+        "test_data_loading.py"
       ]
     },
     "training": {
       "path": "training",
       "purpose": null,
-      "fileCount": 3,
-      "lastAccessed": 1779106695229,
+      "fileCount": 4,
+      "lastAccessed": 1779298153254,
       "keyFiles": [
         "__init__.py",
         "metrics.py",
-        "phase2_losses.py"
+        "priorfgnn_losses.py",
+        "raer_losses.py"
       ]
     },
     "utils": {
       "path": "utils",
       "purpose": "Utility functions",
       "fileCount": 4,
-      "lastAccessed": 1779106695229,
+      "lastAccessed": 1779298153254,
       "keyFiles": [
         "gpu.py",
         "paths.py",
@@ -179,195 +184,225 @@
   },
   "hotPaths": [
     {
-      "path": "scripts/idea3_openfe_comparison.py",
-      "accessCount": 25,
-      "lastAccessed": 1779177508068,
+      "path": "scripts/train_cbr_flash.py",
+      "accessCount": 9,
+      "lastAccessed": 1779347909658,
       "type": "file"
     },
     {
-      "path": "scripts/idea3_multi_llm_scaling.py",
-      "accessCount": 25,
-      "lastAccessed": 1779177601876,
+      "path": "artifacts/tables/EXPERIMENTS_SUMMARY.md",
+      "accessCount": 6,
+      "lastAccessed": 1779356004284,
       "type": "file"
     },
     {
-      "path": "res.md",
-      "accessCount": 19,
-      "lastAccessed": 1779177937280,
-      "type": "file"
-    },
-    {
-      "path": "scripts/idea3_full_benchmark.py",
-      "accessCount": 10,
-      "lastAccessed": 1779177765098,
-      "type": "file"
-    },
-    {
-      "path": "artifacts/tables/idea3_caafe_comparison.md",
-      "accessCount": 5,
-      "lastAccessed": 1779122288077,
-      "type": "file"
-    },
-    {
-      "path": "scripts/idea3_caafe_comparison.py",
-      "accessCount": 5,
-      "lastAccessed": 1779177557021,
-      "type": "file"
-    },
-    {
-      "path": "scripts/idea3b_llm_rule_pilot.py",
+      "path": "scripts/experiments/E5_benchmark_inference.py",
       "accessCount": 4,
-      "lastAccessed": 1779118340945,
+      "lastAccessed": 1779298933048,
       "type": "file"
     },
     {
-      "path": "scripts/idea3_autofe_baselines.py",
+      "path": "scripts/experiments/E7_run_loss_ablation.sh",
       "accessCount": 4,
-      "lastAccessed": 1779118401837,
+      "lastAccessed": 1779354206022,
       "type": "file"
     },
     {
-      "path": "AGENTS.md",
-      "accessCount": 4,
-      "lastAccessed": 1779181733810,
-      "type": "file"
-    },
-    {
-      "path": "artifacts/tables/idea3_full_benchmark.md",
+      "path": "scripts/experiments/generate_summary_tables.py",
       "accessCount": 3,
-      "lastAccessed": 1779118363993,
+      "lastAccessed": 1779346314622,
       "type": "file"
     },
     {
-      "path": "artifacts/tables/idea3_multi_llm_comparison.md",
-      "accessCount": 3,
-      "lastAccessed": 1779174882187,
-      "type": "file"
-    },
-    {
-      "path": "artifacts/tables/idea3_llm_composites_5seed.md",
+      "path": "models/raer_teacher.py",
       "accessCount": 2,
-      "lastAccessed": 1779118329587,
+      "lastAccessed": 1779298926456,
       "type": "file"
     },
     {
-      "path": "scripts/aggregate_idea3.py",
+      "path": "scripts/experiments/E8_run_hyperparam.sh",
       "accessCount": 2,
-      "lastAccessed": 1779118353848,
+      "lastAccessed": 1779299043876,
       "type": "file"
     },
     {
-      "path": "artifacts/tables/idea3_autofe_baselines.md",
+      "path": "scripts/experiments/E7_run_loss_comparison.sh",
       "accessCount": 2,
-      "lastAccessed": 1779118363918,
+      "lastAccessed": 1779347731813,
       "type": "file"
     },
     {
-      "path": "artifacts/results/idea3_scaling/plm_adapter_results.json",
+      "path": "artifacts/tables/E7_loss_ablation.md",
       "accessCount": 2,
-      "lastAccessed": 1779176761379,
+      "lastAccessed": 1779355767010,
       "type": "file"
     },
     {
-      "path": "artifacts/results/idea3_scaling/quick_eval_yelpchi_bwgnn_seed42.json",
-      "accessCount": 2,
-      "lastAccessed": 1779177556937,
-      "type": "file"
-    },
-    {
-      "path": "scripts/train_stage1.py",
+      "path": "configs/raer_fd/experiments/E4_generalization/bwgnn_424/base_detectors/tfinance_sage.yaml",
       "accessCount": 1,
-      "lastAccessed": 1779118310269,
+      "lastAccessed": 1779298623064,
       "type": "file"
     },
     {
-      "path": "data/load_fraud.py",
+      "path": "configs/raer_fd/experiments/E4_generalization/bwgnn_424/teacher/raer_lree/tfinance_sage.yaml",
       "accessCount": 1,
-      "lastAccessed": 1779118310346,
+      "lastAccessed": 1779298623177,
       "type": "file"
     },
     {
-      "path": "evidence/relation_features.py",
+      "path": "configs/raer_fd/experiments/E4_generalization/bwgnn_424/student/tfinance_sage.yaml",
       "accessCount": 1,
-      "lastAccessed": 1779118319791,
+      "lastAccessed": 1779298623279,
       "type": "file"
     },
     {
-      "path": "scripts/train_phase2_reasoner.py",
+      "path": "configs/raer_fd/experiments/E4_generalization/bwgnn_424/base_detectors/tsocial_sage.yaml",
       "accessCount": 1,
-      "lastAccessed": 1779118329271,
+      "lastAccessed": 1779298623380,
       "type": "file"
     },
     {
-      "path": "training/metrics.py",
+      "path": "scripts/experiments/E4_run_tfinance.sh",
       "accessCount": 1,
-      "lastAccessed": 1779118329389,
+      "lastAccessed": 1779298667782,
       "type": "file"
     },
     {
-      "path": "models/cover_rel_reasoner.py",
+      "path": "configs/raer_fd/large_graph/student/cbr_flash_tsocial_sage_lree_scalable.yaml",
       "accessCount": 1,
-      "lastAccessed": 1779118349052,
+      "lastAccessed": 1779298701467,
       "type": "file"
     },
     {
-      "path": "configs/yelpchi_bwgnn.yaml",
+      "path": "configs/raer_fd/large_graph/base_detectors/tsocial_sage_neighbor_mb.yaml",
       "accessCount": 1,
-      "lastAccessed": 1779118349157,
+      "lastAccessed": 1779298701534,
+      "type": "file"
+    },
+    {
+      "path": "configs/raer_fd/large_graph/teacher/raer_lree_scalable/tsocial_sage.yaml",
+      "accessCount": 1,
+      "lastAccessed": 1779298701639,
+      "type": "file"
+    },
+    {
+      "path": "scripts/experiments/E4_run_tsocial.sh",
+      "accessCount": 1,
+      "lastAccessed": 1779298724817,
       "type": "file"
     },
     {
       "path": "models/gnn.py",
       "accessCount": 1,
-      "lastAccessed": 1779118349268,
+      "lastAccessed": 1779298743558,
       "type": "file"
     },
     {
-      "path": "artifacts/figures/idea3_scaling_plot.png",
+      "path": "models/cbr_flash_adapter.py",
       "accessCount": 1,
-      "lastAccessed": 1779121735261,
+      "lastAccessed": 1779298753363,
       "type": "file"
     },
     {
-      "path": "scripts/_test_openfe_fix.py",
+      "path": "evidence/relation_features.py",
       "accessCount": 1,
-      "lastAccessed": 1779122967145,
+      "lastAccessed": 1779298856894,
       "type": "file"
     },
     {
-      "path": "artifacts/tables/idea3_openfe_comparison.md",
+      "path": "scripts/experiments/E3_run_teacher_student.sh",
       "accessCount": 1,
-      "lastAccessed": 1779174881961,
+      "lastAccessed": 1779299110960,
       "type": "file"
     },
     {
-      "path": "artifacts/tables/idea3_openfe_comparison.json",
+      "path": "scripts/experiments/aggregate_all_results.py",
       "accessCount": 1,
-      "lastAccessed": 1779174882083,
+      "lastAccessed": 1779299260711,
       "type": "file"
     },
     {
-      "path": "artifacts/results/idea3_scaling/llm_formulas.json",
+      "path": "scripts/train_raer_teacher.py",
       "accessCount": 1,
-      "lastAccessed": 1779177035067,
+      "lastAccessed": 1779346379738,
       "type": "file"
     },
     {
-      "path": "docs/TKDE_2026_SUBMISSION_PLAN.md",
+      "path": "configs/raer_fd/experiments/E1_benchmark/care_712/student/yelpchi_sage.yaml",
       "accessCount": 1,
-      "lastAccessed": 1779179413324,
+      "lastAccessed": 1779347775075,
       "type": "file"
     },
     {
-      "path": "docs/OPD_FLASH_DESIGN.md",
+      "path": "configs/raer_fd/experiments/E7_loss/v1_full.yaml",
       "accessCount": 1,
-      "lastAccessed": 1779181555812,
+      "lastAccessed": 1779347963555,
       "type": "file"
     },
     {
-      "path": "archive/idea3/README.md",
+      "path": "configs/raer_fd/experiments/E7_loss/v2_bc_only.yaml",
       "accessCount": 1,
-      "lastAccessed": 1779181699985,
+      "lastAccessed": 1779347964397,
+      "type": "file"
+    },
+    {
+      "path": "configs/raer_fd/experiments/E7_loss/v3_dc_only.yaml",
+      "accessCount": 1,
+      "lastAccessed": 1779347965256,
+      "type": "file"
+    },
+    {
+      "path": "configs/raer_fd/experiments/E7_loss/v4_db_only.yaml",
+      "accessCount": 1,
+      "lastAccessed": 1779347966037,
+      "type": "file"
+    },
+    {
+      "path": "data/load_fraud.py",
+      "accessCount": 1,
+      "lastAccessed": 1779348276905,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/tables/E1_yelpchi_bwgnn_semi.md",
+      "accessCount": 1,
+      "lastAccessed": 1779349018675,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/tables/E2_scarcity.md",
+      "accessCount": 1,
+      "lastAccessed": 1779349018718,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/tables/E1_amazon_bwgnn_semi.md",
+      "accessCount": 1,
+      "lastAccessed": 1779349018777,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/tables/E8_hyperparam_sage.md",
+      "accessCount": 1,
+      "lastAccessed": 1779349018839,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/tables/E1_amazon_care_712.md",
+      "accessCount": 1,
+      "lastAccessed": 1779349018914,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/tables/E4_tfinance.md",
+      "accessCount": 1,
+      "lastAccessed": 1779349018973,
+      "type": "file"
+    },
+    {
+      "path": "artifacts/tables/E1_yelpchi_care_712.md",
+      "accessCount": 1,
+      "lastAccessed": 1779349019030,
       "type": "file"
     }
   ]

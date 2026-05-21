@@ -3,7 +3,7 @@
 All detectors registered in models.gnn.DETECTOR_REGISTRY must:
 1. Return a Tensor when return_output=False.
 2. Return a BaseModelOutput when return_output=True.
-3. The embedding dim must equal hidden_dim (so phase2 reasoner base_z_dim
+3. The embedding dim must equal hidden_dim (so raer reasoner base_z_dim
    inferred from z.shape[1] matches hidden_dim).
 4. Logits must be 1D after BaseModelOutput.__post_init__.
 """
@@ -59,7 +59,7 @@ def test_detector_returns_base_model_output(name, tiny_graph):
     ("bwgnn", 64),
 ])
 def test_detector_embedding_dim_matches_hidden(name, expected_dim, tiny_graph):
-    """Phase2 CoVERRelReasoner uses base_z_dim = z.shape[1]; this must equal hidden_dim."""
+    """RAER RAERTeacher uses base_z_dim = z.shape[1]; this must equal hidden_dim."""
     x, edge_index, num_nodes = tiny_graph
     model = build_detector(name=name, in_channels=x.shape[1], hidden_channels=expected_dim)
     model.eval()

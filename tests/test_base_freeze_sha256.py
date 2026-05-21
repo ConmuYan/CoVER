@@ -1,6 +1,6 @@
 """SHA-256 immutability test for base.pt.
 
-Verifies that the base checkpoint is not modified by any Phase 3 step.
+Verifies that the base checkpoint is not modified by RAER-FD training.
 Pure file-hash test (no GPU required).
 """
 
@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-BASE_PT_PATH = Path(
-    "/data1/mq/codes/awesome-graph-anomaly-detection/cover-fd"
-    "/artifacts/checkpoints/yelpchi/bwgnn/fixed_v1_100ep/seed_42/base.pt"
+BASE_PT_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "artifacts/checkpoints/yelpchi/bwgnn/base/seed_42/base.pt"
 )
 
 
@@ -50,8 +50,8 @@ class TestBaseFreezeHash:
         not BASE_PT_PATH.exists(),
         reason=f"base.pt not found at {BASE_PT_PATH}",
     )
-    def test_base_pt_survives_fake_phase3_step(self):
-        """Simulate a Phase 3 step (copy to temp, verify original untouched)."""
+    def test_base_pt_survives_fake_raer_step(self):
+        """Simulate a RAER step (copy to temp, verify original untouched)."""
         hash_before = _sha256_file(BASE_PT_PATH)
 
         # Simulate a "Phase 3 step" that reads but does not modify base.pt
@@ -74,6 +74,6 @@ class TestBaseFreezeHash:
         # Original must be untouched
         hash_after = _sha256_file(BASE_PT_PATH)
         assert hash_before == hash_after, (
-            f"base.pt was mutated during fake Phase 3 step: "
+            f"base.pt was mutated during fake RAER step: "
             f"{hash_before} != {hash_after}"
         )

@@ -1,0 +1,74 @@
+dataset:
+  format: mat
+  name: yelpchi
+  path: datasets/YelpChi.mat
+  scarcity_ratio: 1.0
+  split_mode: supervised
+  stratified: true
+  train_ratio: 0.4
+  val_test_ratio:
+  - 1
+  - 2
+eval:
+  k_values:
+  - 50
+  - 100
+  - 200
+model:
+  dropout: 0.5
+  hidden_dim: 64
+  name: gcn
+  num_layers: 2
+project: raer_fd
+train:
+  debug_epochs: 3
+  device: cuda:0
+  epochs: 100
+  lr: 0.01
+  optimizer: adam
+  patience: 100
+  seed: 0
+  select_metric: auprc
+  weight_decay: 0.0005
+raer_teacher:
+  anchor_relation: RUR
+  delta_rel_max: 2.0
+  early_stop_metric: val_auprc
+  epochs: 300
+  eval_interval: 1
+  evidence:
+    extractor:
+      dropout: 0.3
+      encoder_out_dim: 16
+      hidden_dim: 32
+      out_dim_per_rel: 9
+      use_gcn_emb: false
+      use_proto_features: true
+      encoder_shared: false
+    source: learned
+  evidence_groups:
+  - A
+  - B
+  - C
+  evidence_tau: 1.5
+  expert_shared: false
+  gate_mode: softmax
+  lr: 0.001
+  optimizer: adamw
+  patience: 50
+  rel_dropout: 0.3
+  rel_hidden_dim: 64
+  rel_num_layers: 2
+  relation_names:
+  - RUR
+  - RSR
+  - RTR
+  residual_activation: tanh
+  run_name: raer_lree_ablate_drop_relation_gcn
+  tau_gate: 0.7
+  weight_decay: 0.0001
+experiment:
+  family: lree_ablation
+  stage: teacher_ablation
+  run_name: raer_lree_ablate_drop_relation_gcn
+  canonical_name: LREE-ABLATION

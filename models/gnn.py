@@ -13,6 +13,7 @@ except ImportError:
 
 from models.base import BaseModelOutput
 from models.bwgnn import BWGNNDetector
+from models.priorfgnn import PriorFGNNDetector
 
 
 class GCNDetector(nn.Module):
@@ -131,6 +132,7 @@ DETECTOR_REGISTRY: dict[str, type[nn.Module]] = {
     "sage": SAGEDetector,
     "gat": GATDetector,
     "bwgnn": BWGNNDetector,
+    "priorfgnn": PriorFGNNDetector,
 }
 
 

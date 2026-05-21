@@ -1,0 +1,51 @@
+# PriorF-GNN at cover-fd protocol (40/20/40 stratified) — fair head-to-head vs BWGNN
+# Matches configs/yelpchi_bwgnn.yaml split exactly.
+# patience pulled to max (≥ epochs) so no early stopping.
+
+project: cover_fd
+
+dataset:
+  name: yelpchi
+  unified_data_path: /data1/mq/codes/awesome-graph-anomaly-detection/cover-fd/datasets/unified_404020/yelpchi/seed_42/data.pt
+  mat_path: /data1/mq/codes/awesome-graph-anomaly-detection/cover-fd/datasets/YelpChi.mat
+  split_mode: stratified
+  train_ratio: 0.4
+  val_test_ratio: [1, 2]
+  stratified: true
+
+model:
+  name: priorfgnn
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.3
+  num_relations: 3
+  use_asda: true
+  use_mlp_branch: true
+  use_gnn_branch: true
+  asda_tau: 0.1
+  proj_dim: 64
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+  lambda_sdcl: 0.1
+  sdcl_tau: 0.1
+  sdcl_anchors: 128
+  sdcl_quantile: 0.3
+  sdcl_rounds: 5
+  sdcl_schedule: cosine
+
+train:
+  seed: 42
+  epochs: 500
+  lr: 0.003
+  optimizer: adamw
+  weight_decay: 0.001
+  grad_clip: 1.0
+  scheduler_T0: 20
+  scheduler_Tmult: 2
+  patience: 500           # = epochs → no early stopping
+  device: cuda:0
+  select_metric: auprc
+  use_amp: true
+
+eval:
+  k_values: [50, 100, 200]

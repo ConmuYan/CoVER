@@ -1,0 +1,71 @@
+project: raer_fd
+dataset:
+  name: yelpchi
+  path: datasets/YelpChi.mat
+  format: mat
+  split_mode: supervised
+  train_ratio: 0.4
+  val_test_ratio:
+  - 1
+  - 2
+  scarcity_ratio: 1.0
+  stratified: true
+model:
+  name: gcn
+  hidden_dim: 64
+  num_layers: 2
+  dropout: 0.5
+train:
+  seed: 0
+  epochs: 100
+  debug_epochs: 3
+  lr: 0.01
+  optimizer: adam
+  weight_decay: 0.0005
+  patience: 100
+  device: cuda:0
+  select_metric: auprc
+eval:
+  k_values:
+  - 50
+  - 100
+  - 200
+raer_teacher:
+  run_name: raer_lree
+  optimizer: adamw
+  lr: 0.001
+  weight_decay: 0.0001
+  epochs: 300
+  patience: 50
+  early_stop_metric: val_auprc
+  relation_names:
+  - RUR
+  - RSR
+  - RTR
+  anchor_relation: RUR
+  rel_hidden_dim: 64
+  rel_num_layers: 2
+  rel_dropout: 0.3
+  tau_gate: 0.7
+  evidence_tau: 1.5
+  delta_rel_max: 2.0
+  gate_mode: softmax
+  evidence_groups:
+  - A
+  - B
+  - C
+  expert_shared: false
+  residual_activation: tanh
+  eval_interval: 1
+  evidence:
+    source: learned
+    extractor:
+      hidden_dim: 32
+      encoder_out_dim: 16
+      out_dim_per_rel: 9
+      dropout: 0.3
+experiment:
+  family: raer_lree
+  stage: teacher
+  run_name: raer_lree
+  canonical_name: RAER-LREE

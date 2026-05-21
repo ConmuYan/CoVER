@@ -57,6 +57,7 @@ external/
 artifacts/
 
 # Dataset files
+datasets/
 datasets/*.mat
 datasets/*.pt
 datasets/*.pkl
@@ -93,3 +94,9 @@ runs/
 # Idea-3 archive: keep scripts/README/tables in git, exclude large results/logs
 archive/idea3/results/
 archive/idea3/logs/
+
+# RAER-FD migration/local archives
+archive/legacy_raer_migration_20260520/artifacts_legacy/
+archive/legacy_raer_migration_20260520/logs_legacy/
+archive/debris/
+archive/negative_routes/

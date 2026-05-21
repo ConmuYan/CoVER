@@ -1,4 +1,4 @@
-"""Artifact path management for CoVER-FD experiments."""
+"""Artifact path management for RAER-FD experiments."""
 
 from __future__ import annotations
 
@@ -40,16 +40,16 @@ def get_base_checkpoint_path(dataset: str, model: str, seed: int = 0) -> Path:
     return get_checkpoint_dir(dataset, model, "base", seed) / "base.pt"
 
 
-def get_reasoner_checkpoint_path(dataset: str, model: str, run_name: str, seed: int = 0) -> Path:
-    return get_checkpoint_dir(dataset, model, run_name, seed) / "reasoner.pt"
+def get_raer_teacher_checkpoint_path(dataset: str, model: str, run_name: str, seed: int = 0) -> Path:
+    return get_checkpoint_dir(dataset, model, run_name, seed) / "raer_teacher.pt"
 
 
-def get_stage1_metrics_path(dataset: str, model: str, seed: int = 0) -> Path:
-    return get_results_dir(dataset, model, "base", seed) / "stage1_metrics.json"
+def get_base_metrics_path(dataset: str, model: str, seed: int = 0) -> Path:
+    return get_results_dir(dataset, model, "base", seed) / "base_metrics.json"
 
 
-def get_stage3_metrics_path(dataset: str, model: str, run_name: str, seed: int = 0) -> Path:
-    return get_results_dir(dataset, model, run_name, seed) / "stage3_metrics.json"
+def get_test_metrics_path(dataset: str, model: str, run_name: str, seed: int = 0) -> Path:
+    return get_results_dir(dataset, model, run_name, seed) / "test_metrics.json"
 
 
 def get_evidence_cards_path(dataset: str, model: str, run_name: str, seed: int = 0) -> Path:
@@ -68,8 +68,8 @@ def get_verifier_stats_path(dataset: str, model: str, run_name: str, seed: int =
     return get_err_cache_dir(dataset, model, run_name, seed) / "verifier_stats.json"
 
 
-def get_stage2_stats_path(dataset: str, model: str, run_name: str, seed: int = 0) -> Path:
-    return get_err_cache_dir(dataset, model, run_name, seed) / "stage2_stats.json"
+def get_evidence_stats_path(dataset: str, model: str, run_name: str, seed: int = 0) -> Path:
+    return get_err_cache_dir(dataset, model, run_name, seed) / "evidence_stats.json"
 
 
 def get_split_path(dataset: str, seed: int = 0) -> Path:
@@ -78,12 +78,6 @@ def get_split_path(dataset: str, seed: int = 0) -> Path:
 
 def get_split_meta_path(dataset: str, seed: int = 0) -> Path:
     return get_stratified_split_meta_path(dataset, False, seed)
-
-
-def teacher_to_run_name(teacher: str) -> str:
-    if teacher == "llm":
-        return "qwen"
-    return teacher
 
 
 def get_stratified_split_dir(dataset: str, stratified: bool, seed: int = 0) -> Path:

@@ -212,3 +212,79 @@ def test_load_fraud_dataset_stratified_switch(monkeypatch):
     assert calls["generate"] == 1
     assert calls["save"][0]["stratified"] is True
     assert calls["save"][1]["stratified"] is False
+
+
+def test_new_yelp_style_datasets_use_mat_loader_and_save_split(monkeypatch):
+    data = SimpleNamespace(
+        x=torch.randn(6, 3),
+        edge_index=torch.tensor([[0, 1], [1, 0]], dtype=torch.long),
+        y=torch.tensor([0, 1, 0, 1, 0, 1], dtype=torch.long),
+    )
+    calls = {"paths": [], "datasets": []}
+
+    def fake_load_from_mat(path):
+        calls["paths"].append(str(path))
+        return SimpleNamespace(
+            x=data.x.clone(),
+            edge_index=data.edge_index.clone(),
+            y=data.y.clone(),
+        )
+
+    def fake_stratified_split(input_data, seed=0, ratios=(0.7, 0.15, 0.15)):
+        input_data.train_mask = torch.tensor([True, True, False, False, False, False])
+        input_data.val_mask = torch.tensor([False, False, True, True, False, False])
+        input_data.test_mask = torch.tensor([False, False, False, False, True, True])
+        return input_data
+
+    def fake_save_split(input_data, dataset, seed, split_mode, train_ratio, val_test_ratio, stratified=False):
+        calls["datasets"].append(dataset)
+
+    monkeypatch.setattr(load_fraud_module, "load_from_mat", fake_load_from_mat)
+    monkeypatch.setattr(load_fraud_module, "stratified_split", fake_stratified_split)
+    monkeypatch.setattr(load_fraud_module, "save_split", fake_save_split)
+
+    load_fraud_module.load_fraud_dataset("yelpnyc", seed=7, stratified=True)
+    load_fraud_module.load_fraud_dataset("yelpzip", seed=7, stratified=True)
+
+    assert calls["paths"] == ["datasets/YelpNYC.mat", "datasets/YelpZip.mat"]
+    assert calls["datasets"] == ["yelpnyc", "yelpzip"]
+
+
+def test_single_relation_dgl_datasets_use_dgl_loader_and_save_split(monkeypatch):
+    data = SimpleNamespace(
+        x=torch.randn(5, 11),
+        edge_index=torch.tensor([[0, 1, 2], [1, 2, 3]], dtype=torch.long),
+        y=torch.tensor([0, 1, 0, 1, 0], dtype=torch.long),
+        hsd=torch.zeros(5),
+    )
+    calls = {"paths": [], "invert": [], "datasets": []}
+
+    def fake_load_from_dgl(path, hsd_invert=False, hsd_chunk_size=250_000, append_hsd=True):
+        calls["paths"].append(str(path))
+        calls["invert"].append(bool(hsd_invert))
+        return SimpleNamespace(
+            x=data.x.clone(),
+            edge_index=data.edge_index.clone(),
+            y=data.y.clone(),
+            hsd=data.hsd.clone(),
+        )
+
+    def fake_stratified_split(input_data, seed=0, ratios=(0.7, 0.15, 0.15)):
+        input_data.train_mask = torch.tensor([True, True, False, False, False])
+        input_data.val_mask = torch.tensor([False, False, True, False, False])
+        input_data.test_mask = torch.tensor([False, False, False, True, True])
+        return input_data
+
+    def fake_save_split(input_data, dataset, seed, split_mode, train_ratio, val_test_ratio, stratified=False):
+        calls["datasets"].append(dataset)
+
+    monkeypatch.setattr(load_fraud_module, "load_from_dgl", fake_load_from_dgl)
+    monkeypatch.setattr(load_fraud_module, "stratified_split", fake_stratified_split)
+    monkeypatch.setattr(load_fraud_module, "save_split", fake_save_split)
+
+    load_fraud_module.load_fraud_dataset("tfinance", seed=7, stratified=True)
+    load_fraud_module.load_fraud_dataset("tsocial", seed=7, stratified=True)
+
+    assert calls["paths"] == ["datasets/tfinance", "datasets/tsocial"]
+    assert calls["invert"] == [True, False]
+    assert calls["datasets"] == ["tfinance", "tsocial"]
